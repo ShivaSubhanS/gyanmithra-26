@@ -557,54 +557,53 @@ app.post('/api/student/run-code', async (req, res) => {
       return res.status(400).json({ error: 'No test cases found for this question' });
     }
 
-    const results = [];
-    let passedCount = 0;
     const totalTestCases = question.testCases.length;
     const usedLanguageId = languageId || 71; // Default to Python 3
 
-    // Run each test case
-    for (const testCase of question.testCases) {
-      try {
-        // Submit to Judge0
-        const submitResponse = await axios.post(
-          `${process.env.JUDGE0_API_URL}/submissions?base64_encoded=false&wait=true`,
-          {
-            source_code: code,
-            language_id: usedLanguageId,
-            stdin: testCase.input,
-            expected_output: testCase.expectedOutput
-          },
-          {
-            headers: { 'Content-Type': 'application/json' }
-          }
-        );
+    // Run all test cases concurrently
+    const results = await Promise.all(
+      question.testCases.map(async (testCase) => {
+        try {
+          // Submit to Judge0
+          const submitResponse = await axios.post(
+            `${process.env.JUDGE0_API_URL}/submissions?base64_encoded=false&wait=true`,
+            {
+              source_code: code,
+              language_id: usedLanguageId,
+              stdin: testCase.input,
+              expected_output: testCase.expectedOutput
+            },
+            {
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
 
-        const result = submitResponse.data;
-        const passed = result.status?.id === 3 && 
-                       result.stdout?.trim() === testCase.expectedOutput.trim();
+          const result = submitResponse.data;
+          const passed = result.status?.id === 3 && 
+                         result.stdout?.trim() === testCase.expectedOutput.trim();
 
-        results.push({
-          input: testCase.input,
-          expectedOutput: testCase.expectedOutput,
-          actualOutput: result.stdout || result.stderr || result.compile_output || 'No output',
-          passed,
-          status: result.status?.description || 'Unknown',
-          time: result.time,
-          memory: result.memory
-        });
+          return {
+            input: testCase.input,
+            expectedOutput: testCase.expectedOutput,
+            actualOutput: result.stdout || result.stderr || result.compile_output || 'No output',
+            passed,
+            status: result.status?.description || 'Unknown',
+            time: result.time,
+            memory: result.memory
+          };
+        } catch (judgeError) {
+          return {
+            input: testCase.input,
+            expectedOutput: testCase.expectedOutput,
+            actualOutput: 'Judge0 Error: ' + judgeError.message,
+            passed: false,
+            status: 'Error'
+          };
+        }
+      })
+    );
 
-        if (passed) passedCount++;
-      } catch (judgeError) {
-        results.push({
-          input: testCase.input,
-          expectedOutput: testCase.expectedOutput,
-          actualOutput: 'Judge0 Error: ' + judgeError.message,
-          passed: false,
-          status: 'Error'
-        });
-      }
-    }
-
+    const passedCount = results.filter(r => r.passed).length;
     const allPassed = passedCount === totalTestCases;
 
     // Save submission record only if at least 1 test case passed
