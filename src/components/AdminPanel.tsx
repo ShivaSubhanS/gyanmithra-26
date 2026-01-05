@@ -29,12 +29,14 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
   const [newQuestion, setNewQuestion] = useState({
     title: '',
     description: '',
+    difficulty: 'medium' as 'easy' | 'medium' | 'hard',
     testCases: [{ input: '', expectedOutput: '' }]
   });
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [editQuestionForm, setEditQuestionForm] = useState({
     title: '',
     description: '',
+    difficulty: 'medium' as 'easy' | 'medium' | 'hard',
     testCases: [{ input: '', expectedOutput: '' }]
   });
   const [questionSearch, setQuestionSearch] = useState('');
@@ -272,6 +274,7 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
         setNewQuestion({
           title: '',
           description: '',
+          difficulty: 'medium',
           testCases: [{ input: '', expectedOutput: '' }]
         });
         fetchData();
@@ -302,6 +305,7 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
       const header = lines[0].split(',').map(h => h.trim().toLowerCase());
       const titleIdx = header.indexOf('q_title');
       const descIdx = header.indexOf('q_description');
+      const difficultyIdx = header.indexOf('q_difficulty');
       
       if (titleIdx === -1 || descIdx === -1) {
         showMessage('error', 'CSV must have q_title and q_description columns');
@@ -337,11 +341,15 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
 
         const title = row[titleIdx]?.trim();
         const description = row[descIdx]?.trim();
+        const difficulty = difficultyIdx !== -1 ? row[difficultyIdx]?.trim().toLowerCase() : 'medium';
 
         if (!title || !description) {
           errorCount++;
           continue;
         }
+
+        // Validate difficulty
+        const validDifficulty = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium';
 
         // Extract test cases
         const testCases: { input: string; expectedOutput: string }[] = [];
@@ -362,6 +370,7 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
           const result = await api.admin.addQuestion({
             title,
             description,
+            difficulty: validDifficulty,
             testCases
           }, adminSecret);
 
@@ -456,6 +465,7 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
     setEditQuestionForm({
       title: question.title,
       description: question.description,
+      difficulty: question.difficulty || 'medium',
       testCases: question.testCases
     });
   };
@@ -892,6 +902,16 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
                   required
                 />
 
+                <select
+                  value={newQuestion.difficulty}
+                  onChange={(e) => setNewQuestion({ ...newQuestion, difficulty: e.target.value as 'easy' | 'medium' | 'hard' })}
+                  className="difficulty-select"
+                >
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+
                 <div className="test-cases-section">
                   <div className="section-header">
                     <h3>Test Cases</h3>
@@ -960,6 +980,9 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
                   <div key={q._id} className="question-card">
                     <div className="question-header">
                       <h3>{q.title}</h3>
+                      <span className={`difficulty-badge ${q.difficulty || 'medium'}`}>
+                        {(q.difficulty || 'medium').toUpperCase()}
+                      </span>
                     </div>
                     <p className="question-desc">{q.description.slice(0, 150)}...</p>
                     <div className="question-meta">
@@ -1008,6 +1031,19 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
                         rows={6}
                         required
                       />
+                    </div>
+
+                    <div className="input-group">
+                      <label>Difficulty</label>
+                      <select
+                        value={editQuestionForm.difficulty}
+                        onChange={(e) => setEditQuestionForm({ ...editQuestionForm, difficulty: e.target.value as 'easy' | 'medium' | 'hard' })}
+                        className="difficulty-select"
+                      >
+                        <option value="easy">Easy</option>
+                        <option value="medium">Medium</option>
+                        <option value="hard">Hard</option>
+                      </select>
                     </div>
 
                     <div className="test-cases-section">

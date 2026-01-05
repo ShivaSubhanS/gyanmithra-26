@@ -11,17 +11,38 @@ interface CodingEnvironmentProps {
   onLogout: () => void;
 }
 
-// Language options (without JavaScript)
+// Language options with default templates
 const LANGUAGES = [
-  { id: 71, name: 'Python 3', monaco: 'python' },
-  { id: 62, name: 'Java', monaco: 'java' },
-  { id: 54, name: 'C++', monaco: 'cpp' },
-  { id: 50, name: 'C', monaco: 'c' }
+  { 
+    id: 71, 
+    name: 'Python 3', 
+    monaco: 'python',
+    template: '# Write your Python code here\n\ndef main():\n    # Your code goes here\n    pass\n\nif __name__ == "__main__":\n    main()'
+  },
+  { 
+    id: 62, 
+    name: 'Java', 
+    monaco: 'java',
+    template: '// Write your Java code here\n\nimport java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner scanner = new Scanner(System.in);\n        // Your code goes here\n        \n    }\n}'
+  },
+  { 
+    id: 54, 
+    name: 'C++', 
+    monaco: 'cpp',
+    template: '// Write your C++ code here\n\n#include <iostream>\nusing namespace std;\n\nint main() {\n    // Your code goes here\n    \n    return 0;\n}'
+  },
+  { 
+    id: 50, 
+    name: 'C', 
+    monaco: 'c',
+    template: '// Write your C code here\n\n#include <stdio.h>\n\nint main() {\n    // Your code goes here\n    \n    return 0;\n}'
+  }
 ];
 
 export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEnvironmentProps) {
   const [question, setQuestion] = useState<Question | null>(null);
   const [code, setCode] = useState('');
+  const [codeByLanguage, setCodeByLanguage] = useState<Record<number, string>>({});
   const [languageId, setLanguageId] = useState(71); // Default to Python 3
   const [timeLeft, setTimeLeft] = useState(60);
   const [eventTimeLeft, setEventTimeLeft] = useState<number | null>(null);
@@ -43,11 +64,40 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
   const autoSaveRef = useRef<number | null>(null);
   const pollRef = useRef<number | null>(null);
   const codeRef = useRef(code);
+  const languageIdRef = useRef(languageId);
 
   // Keep code ref updated
   useEffect(() => {
     codeRef.current = code;
   }, [code]);
+
+  // Keep languageId ref updated
+  useEffect(() => {
+    languageIdRef.current = languageId;
+  }, [languageId]);
+
+  // Sync code changes to codeByLanguage for current language
+  useEffect(() => {
+    if (code !== undefined && languageId) {
+      setCodeByLanguage(prev => ({
+        ...prev,
+        [languageId]: code
+      }));
+    }
+  }, [code, languageId]);
+
+  // Handle language change - save current code and load code for new language
+  const handleLanguageChange = (newLanguageId: number) => {
+    // Save current code for current language (already done by effect above)
+    
+    // Load code for new language or use template
+    const newCode = codeByLanguage[newLanguageId] || 
+                    LANGUAGES.find(l => l.id === newLanguageId)?.template || '';
+    
+    // Switch to new language
+    setLanguageId(newLanguageId);
+    setCode(newCode);
+  };
 
   // Fetch settings on mount
   useEffect(() => {
@@ -75,7 +125,20 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
       }
 
       setQuestion(result.question);
-      setCode(result.code || '');
+      
+      // Load code by language from server
+      const receivedCodeByLang = result.codeByLanguage || {};
+      setCodeByLanguage(receivedCodeByLang);
+      
+      // Set current language and its code
+      const currentLangId = result.languageId || 71;
+      setLanguageId(currentLangId);
+      
+      // Get code for current language or use template
+      const currentCode = receivedCodeByLang[currentLangId] || 
+                          LANGUAGES.find(l => l.id === currentLangId)?.template || '';
+      setCode(currentCode);
+      
       setCompleted(result.completed);
       setCurrentRound(result.currentRound);
       setSessionStarted(true);
@@ -105,7 +168,8 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
           setEventExpired(true);
         }
       } else {
-        setEventTimeLeft(eDuration);
+        // Don't set event time if session hasn't truly started yet
+        setEventTimeLeft(null);
       }
     } catch (error) {
       console.error('Failed to start session:', error);
@@ -121,7 +185,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
 
     autoSaveRef.current = window.setInterval(async () => {
       try {
-        await api.student.saveCode(teamName, gmid, codeRef.current);
+        await api.student.saveCode(teamName, gmid, codeRef.current, languageIdRef.current);
         console.log('Code auto-saved');
       } catch (error) {
         console.error('Auto-save failed:', error);
@@ -184,9 +248,9 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
   const handleEventEnd = async () => {
     try {
       // Save code before ending
-      await api.student.saveCode(teamName, gmid, codeRef.current);
+      await api.student.saveCode(teamName, gmid, codeRef.current, languageIdRef.current);
       // Mark event as expired
-      await api.student.eventExpired(teamName, gmid, codeRef.current);
+      await api.student.eventExpired(teamName, gmid);
       setEventExpired(true);
     } catch (error) {
       console.error('Event end failed:', error);
@@ -198,8 +262,8 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
     setShuffling(true);
     
     try {
-      // Save current code first
-      await api.student.saveCode(teamName, gmid, codeRef.current);
+      // Save current code and language first
+      await api.student.saveCode(teamName, gmid, codeRef.current, languageIdRef.current);
       
       // Trigger shuffle
       await api.student.shuffle(teamName);
@@ -212,7 +276,20 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
       
       if (state.success) {
         setQuestion(state.question);
-        setCode(state.code || '');
+        
+        // Load code by language from server
+        const receivedCodeByLang = state.codeByLanguage || {};
+        setCodeByLanguage(receivedCodeByLang);
+        
+        // Set current language and its code
+        const currentLangId = state.languageId || 71;
+        setLanguageId(currentLangId);
+        
+        // Get code for current language or use template
+        const currentCode = receivedCodeByLang[currentLangId] || 
+                            LANGUAGES.find(l => l.id === currentLangId)?.template || '';
+        setCode(currentCode);
+        
         setCompleted(state.completed);
         setCurrentRound(state.currentRound);
         setAllCompleted(state.allCompleted);
@@ -237,7 +314,20 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
         
         if (state.shuffleHappened) {
           setQuestion(state.question);
-          setCode(state.code || '');
+          
+          // Load code by language from server
+          const receivedCodeByLang = state.codeByLanguage || {};
+          setCodeByLanguage(receivedCodeByLang);
+          
+          // Set current language and its code
+          const currentLangId = state.languageId || 71;
+          setLanguageId(currentLangId);
+          
+          // Get code for current language or use template
+          const currentCode = receivedCodeByLang[currentLangId] || 
+                              LANGUAGES.find(l => l.id === currentLangId)?.template || '';
+          setCode(currentCode);
+          
           setCompleted(state.completed);
           setCurrentRound(state.currentRound);
           
@@ -270,8 +360,8 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
     setResults([]);
 
     try {
-      // Save code first
-      await api.student.saveCode(teamName, gmid, code);
+      // Save code and language first
+      await api.student.saveCode(teamName, gmid, code, languageId);
       
       // Run code with selected language
       const result = await api.student.runCode(teamName, gmid, code, languageId);
@@ -326,18 +416,78 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
       <div className="coding-env">
         <div className="start-screen">
           <h1>Brainwave Buzzer</h1>
-          <p>Welcome, {gmid}!</p>
-          <p>Team: {teamName}</p>
-          <p className="instructions">
-            You will be given a coding challenge. Complete it within {shuffleTime} seconds, 
-            or your code will be shuffled to a teammate!
-          </p>
-          <button onClick={startSession} className="start-btn">
-            Start Challenge
-          </button>
-          <button onClick={onLogout} className="logout-btn">
-            Logout
-          </button>
+          <div className="welcome-info">
+            <p className="player-info">Player: <strong>{gmid}</strong></p>
+            <p className="team-info">Team: <strong>{teamName}</strong></p>
+          </div>
+          
+          <div className="instructions">
+            <h2>Challenge Rules & Instructions</h2>
+            
+            <div className="instruction-section">
+              <h3>Objective</h3>
+              <p>Solve coding problems as a team. Each member gets a different difficulty level:</p>
+              <ul>
+                <li><span className="diff-easy">Easy</span> - Member 1</li>
+                <li><span className="diff-medium">Medium</span> - Member 2</li>
+                <li><span className="diff-hard">Hard</span> - Member 3</li>
+              </ul>
+            </div>
+
+            <div className="instruction-section">
+              <h3>Time Limits</h3>
+              <ul>
+                <li><strong>Shuffle Timer:</strong> {shuffleTime} seconds - Complete your problem or code shuffles to next teammate</li>
+                <li><strong>Event Timer:</strong> {Math.floor(eventDuration / 60)} minutes total - Complete all challenges before time runs out</li>
+              </ul>
+            </div>
+
+            <div className="instruction-section">
+              <h3>Coding Guidelines</h3>
+              <ul>
+                <li>Choose from <strong>4 languages:</strong> Python 3, Java, C++, C</li>
+                <li>Each language has its own code editor - switch anytime!</li>
+              </ul>
+            </div>
+
+            <div className="instruction-section">
+              <h3>Code Shuffle</h3>
+              <ul>
+                <li>Happens automatically when shuffle timer hits 0</li>
+                <li>Your code rotates to the next team member</li>
+                <li>Continue where they left off or start fresh</li>
+                <li>Code shuffle stops for a member if all test cases are passed</li>
+              </ul>
+            </div>
+
+            <div className="instruction-section">
+              <h3>Test Cases</h3>
+              <ul>
+                <li>Only <strong>first test case</strong> is visible (sample)</li>
+                <li>Hidden test cases verify your solution</li>
+                <li>Must pass <strong>ALL</strong> test cases to complete</li>
+                <li>Full results shown after event ends</li>
+              </ul>
+            </div>
+
+            <div className="instruction-section warning">
+              <h3>Important Notes</h3>
+              <ul>
+                <li>Timers start when <strong>first team member</strong> clicks Start</li>
+                <li>All 3 members must complete for team victory</li>
+                <li>Work together, communicate, and help each other!</li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="start-actions">
+            <button onClick={startSession} className="start-btn" disabled={loading}>
+              {loading ? 'Starting...' : ' Start Challenge'}
+            </button>
+            <button onClick={onLogout} className="logout-btn">
+              ← Logout
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -347,7 +497,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
     return (
       <div className="coding-env">
         <div className="completion-screen expired">
-          <h1>⏰ Event Time Expired!</h1>
+          <h1> Event Time Expired!</h1>
           <p>The event time has ended. Your code has been saved.</p>
           <button onClick={onLogout} className="logout-btn">
             Exit
@@ -361,7 +511,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
     return (
       <div className="coding-env">
         <div className="completion-screen">
-          <h1>🎉 Team Challenge Complete!</h1>
+          <h1> Team Challenge Complete!</h1>
           <p>All team members have successfully completed their challenges!</p>
           <button onClick={onLogout} className="logout-btn">
             Exit
@@ -410,27 +560,92 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
       <main className="coding-main">
         <aside className="left-panel">
           <div className="question-panel">
-            <h2>{question?.title || 'Loading...'}</h2>
+            <div className="question-title-row">
+              <h2>{question?.title || 'Loading...'}</h2>
+              {question?.difficulty && (
+                <span className={`difficulty-badge ${question.difficulty}`}>
+                  {question.difficulty.toUpperCase()}
+                </span>
+              )}
+            </div>
             <div className="question-description">
               <pre>{question?.description}</pre>
             </div>
             
             <div className="test-cases-preview">
-              <h3>Sample Test Cases:</h3>
-              {question?.testCases.slice(0, 2).map((tc, idx) => (
+              <h3>Sample Test Case:</h3>
+              {question?.testCases.slice(0, 1).map((tc, idx) => (
                 <div key={idx} className="test-case-preview">
                   <div><strong>Input:</strong> <code>{tc.input}</code></div>
-                  <div><strong>Expected:</strong> <code>{tc.expectedOutput}</code></div>
+                  <div><strong>Expected Output:</strong> <code>{tc.expectedOutput}</code></div>
                 </div>
               ))}
+              <p className="hidden-tests-note">
+                💡 Note: There are {question?.testCases.length || 0} total test cases. 
+                Only the first one is visible. Others are hidden.
+              </p>
             </div>
           </div>
 
           {showResults && (
             <div className="results-panel">
               <h3>Test Results</h3>
+              
+              {/* Summary stats */}
+              {results.length > 0 && (
+                <div className="results-summary">
+                  <div className="summary-stat">
+                    <strong>Passed:</strong> {results.filter(r => r.passed).length} / {results.length}
+                  </div>
+                  {eventExpired && (
+                    <div className="summary-stat score">
+                      <strong>Final Score:</strong> {Math.round((results.filter(r => r.passed).length / results.length) * 100)}%
+                    </div>
+                  )}
+                </div>
+              )}
+              
               <div className="results-list">
-                {results.map((result, idx) => (
+                {/* Show only first test case details during event */}
+                {!eventExpired && results.slice(0, 1).map((result, idx) => (
+                  <div 
+                    key={idx} 
+                    className={`result-item ${result.passed ? 'passed' : 'failed'}`}
+                  >
+                    <div className="result-header">
+                      <span>Sample Test Case</span>
+                      <span className={`result-badge ${result.passed ? 'badge-pass' : 'badge-fail'}`}>
+                        {result.passed ? '✓ Passed' : '✗ Failed'}
+                      </span>
+                    </div>
+                    <div className="result-details">
+                      <div><strong>Input:</strong> <code>{result.input}</code></div>
+                      <div><strong>Expected:</strong> <code>{result.expectedOutput}</code></div>
+                      <div><strong>Output:</strong> <code>{result.actualOutput}</code></div>
+                      {result.status && <div><strong>Status:</strong> {result.status}</div>}
+                    </div>
+                  </div>
+                ))}
+                
+                {/* Show remaining hidden test results as pass/fail only during event */}
+                {!eventExpired && results.length > 1 && (
+                  <div className="hidden-tests-list">
+                    {results.slice(1).map((result, idx) => (
+                      <div 
+                        key={idx + 1} 
+                        className={`hidden-test-item ${result.passed ? 'passed' : 'failed'}`}
+                      >
+                        <span>Hidden Test Case {idx + 1}</span>
+                        <span className={`result-badge ${result.passed ? 'badge-pass' : 'badge-fail'}`}>
+                          {result.passed ? '✓ Passed' : '✗ Incorrect'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Show all test case details after event expires */}
+                {eventExpired && results.map((result, idx) => (
                   <div 
                     key={idx} 
                     className={`result-item ${result.passed ? 'passed' : 'failed'}`}
@@ -458,7 +673,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
           <div className="editor-toolbar">
             <select
               value={languageId}
-              onChange={(e) => setLanguageId(parseInt(e.target.value))}
+              onChange={(e) => handleLanguageChange(parseInt(e.target.value))}
               className="language-select"
               disabled={completed || eventExpired}
             >

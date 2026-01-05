@@ -16,6 +16,7 @@ export const api = {
     addQuestion: async (question: {
       title: string;
       description: string;
+      difficulty?: string;
       testCases: { input: string; expectedOutput: string }[];
     }, adminSecret: string) => {
       const response = await fetch(`${API_BASE_URL}/admin/add-question`, {
@@ -43,6 +44,7 @@ export const api = {
     editQuestion: async (id: string, question: {
       title?: string;
       description?: string;
+      difficulty?: string;
       testCases?: { input: string; expectedOutput: string }[];
     }, adminSecret: string) => {
       const response = await fetch(`${API_BASE_URL}/admin/questions/${id}`, {
@@ -161,11 +163,11 @@ export const api = {
       return response.json();
     },
 
-    saveCode: async (teamName: string, gmid: string, code: string) => {
+    saveCode: async (teamName: string, gmid: string, code: string, languageId?: number) => {
       const response = await fetch(`${API_BASE_URL}/student/save-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teamName, gmid, code })
+        body: JSON.stringify({ teamName, gmid, code, languageId })
       });
       return response.json();
     },
@@ -197,11 +199,11 @@ export const api = {
       return response.json();
     },
 
-    eventExpired: async (teamName: string, gmid: string, code: string) => {
+    eventExpired: async (teamName: string, gmid: string) => {
       const response = await fetch(`${API_BASE_URL}/student/event-expired`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teamName, gmid, code })
+        body: JSON.stringify({ teamName, gmid })
       });
       return response.json();
     }

@@ -10,6 +10,11 @@ const questionSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  difficulty: {
+    type: String,
+    enum: ['easy', 'medium', 'hard'],
+    default: 'medium'
+  },
   testCases: [{
     input: {
       type: String,
@@ -43,9 +48,14 @@ const teamSchema = new mongoose.Schema({
       ref: 'Question',
       default: null
     },
-    code: {
-      type: String,
-      default: ''
+    codeByLanguage: {
+      type: Map,
+      of: String,
+      default: {}
+    },
+    languageId: {
+      type: Number,
+      default: 71
     },
     completed: {
       type: Boolean,

@@ -51,7 +51,7 @@ app.post('/api/admin/register-team', async (req, res) => {
 // Add a new question
 app.post('/api/admin/add-question', async (req, res) => {
   try {
-    const { title, description, testCases, adminSecret } = req.body;
+    const { title, description, difficulty, testCases, adminSecret } = req.body;
     
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
@@ -60,6 +60,7 @@ app.post('/api/admin/add-question', async (req, res) => {
     const question = new Question({
       title,
       description,
+      difficulty: difficulty || 'medium',
       testCases
     });
 
@@ -99,7 +100,7 @@ app.delete('/api/admin/questions/:id', async (req, res) => {
 // Edit a question
 app.put('/api/admin/questions/:id', async (req, res) => {
   try {
-    const { adminSecret, title, description, testCases } = req.body;
+    const { adminSecret, title, description, difficulty, testCases } = req.body;
     
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
@@ -112,6 +113,7 @@ app.put('/api/admin/questions/:id', async (req, res) => {
 
     if (title) question.title = title;
     if (description) question.description = description;
+    if (difficulty) question.difficulty = difficulty;
     if (testCases) question.testCases = testCases;
 
     await question.save();
@@ -361,7 +363,8 @@ app.post('/api/student/start-session', async (req, res) => {
         success: true,
         alreadyActive: true,
         question,
-        code: member.code,
+        codeByLanguage: Object.fromEntries(member.codeByLanguage || new Map()),
+        languageId: member.languageId || 71,
         completed: member.completed,
         roundStartTime: team.roundStartTime,
         currentRound: team.currentRound,
@@ -372,17 +375,28 @@ app.post('/api/student/start-session', async (req, res) => {
       });
     }
 
-    // Get random questions for each member
-    const questions = await Question.aggregate([{ $sample: { size: 3 } }]);
+    // Get random questions - one easy, one medium, one hard
+    const easyQuestions = await Question.find({ difficulty: 'easy' });
+    const mediumQuestions = await Question.find({ difficulty: 'medium' });
+    const hardQuestions = await Question.find({ difficulty: 'hard' });
     
-    if (questions.length < 3) {
-      return res.status(400).json({ error: 'Not enough questions in database. Need at least 3.' });
+    if (easyQuestions.length < 1 || mediumQuestions.length < 1 || hardQuestions.length < 1) {
+      return res.status(400).json({ 
+        error: 'Not enough questions in database. Need at least 1 easy, 1 medium, and 1 hard question.' 
+      });
     }
 
-    // Assign questions to members
+    // Pick random questions from each difficulty
+    const selectedQuestions = [
+      easyQuestions[Math.floor(Math.random() * easyQuestions.length)],
+      mediumQuestions[Math.floor(Math.random() * mediumQuestions.length)],
+      hardQuestions[Math.floor(Math.random() * hardQuestions.length)]
+    ];
+
+    // Assign questions to members (easy, medium, hard)
     for (let i = 0; i < team.members.length; i++) {
-      team.members[i].questionId = questions[i]._id;
-      team.members[i].code = '';
+      team.members[i].questionId = selectedQuestions[i]._id;
+      team.members[i].codeByLanguage = new Map();
       team.members[i].completed = false;
     }
 
@@ -396,12 +410,13 @@ app.post('/api/student/start-session', async (req, res) => {
 
     // Return the question for the current user
     const memberIndex = team.members.findIndex(m => m.gmid === gmid);
-    const memberQuestion = questions[memberIndex];
+    const memberQuestion = selectedQuestions[memberIndex];
 
     res.json({
       success: true,
       question: memberQuestion,
-      code: team.members[memberIndex].code,
+      codeByLanguage: Object.fromEntries(team.members[memberIndex].codeByLanguage || new Map()),
+      languageId: team.members[memberIndex].languageId || 71,
       completed: false,
       roundStartTime: team.roundStartTime,
       currentRound: team.currentRound,
@@ -441,7 +456,8 @@ app.post('/api/student/get-state', async (req, res) => {
     res.json({
       success: true,
       question: member.questionId,
-      code: member.code,
+      codeByLanguage: Object.fromEntries(member.codeByLanguage || new Map()),
+      languageId: member.languageId || 71,
       completed: member.completed,
       roundStartTime: team.roundStartTime,
       currentRound: team.currentRound,
@@ -460,7 +476,7 @@ app.post('/api/student/get-state', async (req, res) => {
 // Save code (auto-save every 10 seconds)
 app.post('/api/student/save-code', async (req, res) => {
   try {
-    const { teamName, gmid, code } = req.body;
+    const { teamName, gmid, code, languageId } = req.body;
 
     const team = await Team.findOne({ teamName });
     if (!team) {
@@ -477,7 +493,12 @@ app.post('/api/student/save-code', async (req, res) => {
       return res.json({ success: true, message: 'Already completed' });
     }
 
-    team.members[memberIndex].code = code;
+    // Save code for specific language
+    if (!team.members[memberIndex].codeByLanguage) {
+      team.members[memberIndex].codeByLanguage = new Map();
+    }
+    team.members[memberIndex].codeByLanguage.set(String(languageId), code);
+    if (languageId) team.members[memberIndex].languageId = languageId;
     team.members[memberIndex].lastUpdated = new Date();
     await team.save();
 
@@ -513,7 +534,8 @@ app.post('/api/student/shuffle', async (req, res) => {
     // Create a shuffled version of the incomplete members' data
     const shuffledData = incompleteIndices.map(i => ({
       questionId: team.members[i].questionId,
-      code: team.members[i].code
+      codeByLanguage: team.members[i].codeByLanguage || new Map(),
+      languageId: team.members[i].languageId || 71
     }));
 
     // Rotate the data (shift by 1)
@@ -522,7 +544,8 @@ app.post('/api/student/shuffle', async (req, res) => {
     // Apply the rotated data back to incomplete members
     incompleteIndices.forEach((memberIdx, dataIdx) => {
       team.members[memberIdx].questionId = rotatedData[dataIdx].questionId._id || rotatedData[dataIdx].questionId;
-      team.members[memberIdx].code = rotatedData[dataIdx].code;
+      team.members[memberIdx].codeByLanguage = rotatedData[dataIdx].codeByLanguage;
+      team.members[memberIdx].languageId = rotatedData[dataIdx].languageId;
     });
 
     team.roundStartTime = new Date();
@@ -566,36 +589,42 @@ app.post('/api/student/run-code', async (req, res) => {
         try {
           // Submit to Judge0
           const submitResponse = await axios.post(
-            `${process.env.JUDGE0_API_URL}/submissions?base64_encoded=false&wait=true`,
+            `${process.env.JUDGE0_API_URL}/submissions/?wait=true`,
             {
-              source_code: code,
               language_id: usedLanguageId,
-              stdin: testCase.input,
-              expected_output: testCase.expectedOutput
+              source_code: code,
+              stdin: testCase.input
             },
             {
-              headers: { 'Content-Type': 'application/json' }
+              headers: { 
+                'Content-Type': 'application/json',
+                'User-Agent': 'BrainwaveBuzzer/1.0'
+              }
             }
           );
 
           const result = submitResponse.data;
-          const passed = result.status?.id === 3 && 
-                         result.stdout?.trim() === testCase.expectedOutput.trim();
+          
+          // Judge0 status codes: 3 = Accepted (correct output)
+          const actualOutput = (result.stdout || result.stderr || result.compile_output || '').trim();
+          const expectedOutput = testCase.expectedOutput.trim();
+          const passed = result.status?.id === 3 && actualOutput === expectedOutput;
 
           return {
             input: testCase.input,
             expectedOutput: testCase.expectedOutput,
-            actualOutput: result.stdout || result.stderr || result.compile_output || 'No output',
+            actualOutput: actualOutput || 'No output',
             passed,
             status: result.status?.description || 'Unknown',
             time: result.time,
             memory: result.memory
           };
         } catch (judgeError) {
+          console.error('Judge0 API Error:', judgeError.response?.data || judgeError.message);
           return {
             input: testCase.input,
             expectedOutput: testCase.expectedOutput,
-            actualOutput: 'Judge0 Error: ' + judgeError.message,
+            actualOutput: `Judge0 Error: ${judgeError.response?.data?.message || judgeError.message}`,
             passed: false,
             status: 'Error'
           };
@@ -676,7 +705,8 @@ app.post('/api/student/check-shuffle', async (req, res) => {
       currentRound: team.currentRound,
       shuffleHappened,
       question: member.questionId,
-      code: member.code,
+      codeByLanguage: Object.fromEntries(member.codeByLanguage || new Map()),
+      languageId: member.languageId || 71,
       completed: member.completed,
       roundStartTime: team.roundStartTime,
       eventStartTime: team.eventStartTime,
@@ -692,20 +722,14 @@ app.post('/api/student/check-shuffle', async (req, res) => {
 // Event expired - auto submit
 app.post('/api/student/event-expired', async (req, res) => {
   try {
-    const { teamName, gmid, code } = req.body;
+    const { teamName, gmid } = req.body;
 
     const team = await Team.findOne({ teamName });
     if (!team) {
       return res.status(404).json({ error: 'Team not found' });
     }
 
-    // Save final code
-    const memberIndex = team.members.findIndex(m => m.gmid === gmid);
-    if (memberIndex !== -1) {
-      team.members[memberIndex].code = code;
-      team.members[memberIndex].lastUpdated = new Date();
-    }
-
+    // Mark event as expired (code is already saved via auto-save)
     team.eventExpired = true;
     await team.save();
 
