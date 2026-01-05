@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Editor from '@monaco-editor/react';
+import '../monaco.setup'; // Import Monaco setup for LAN compatibility
 import api from '../api';
 import type { Question, TestResult } from '../types';
 import './CodingEnvironment.css';
