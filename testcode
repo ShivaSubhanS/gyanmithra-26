@@ -1,0 +1,9 @@
+$headers=@{}
+$headers.Add("Content-Type", "application/json")
+$headers.Add("User-Agent", "insomnia/12.2.0")
+$response = Invoke-WebRequest -Uri 'http://172.16.1.170/submissions/?wait=true' -Method POST -Headers $headers -ContentType 'application/json' -Body '{
+  "language_id": 70,
+  "source_code": "print 'Testing Over Internett'",
+  "stdin": ""
+}
+'
