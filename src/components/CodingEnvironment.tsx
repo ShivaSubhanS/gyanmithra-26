@@ -15,7 +15,7 @@ interface CodingEnvironmentProps {
 const LANGUAGES = [
   { 
     id: 71, 
-    name: 'Python 3', 
+    name: 'Python', 
     monaco: 'python',
     template: '# Write your Python code here\n\ndef main():\n    # Your code goes here\n    pass\n\nif __name__ == "__main__":\n    main()'
   },
@@ -41,6 +41,7 @@ const LANGUAGES = [
 
 export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEnvironmentProps) {
   const [question, setQuestion] = useState<Question | null>(null);
+  const [questionId, setQuestionId] = useState<string>(''); // Track current question ID for saving code
   const [code, setCode] = useState('');
   const [codeByLanguage, setCodeByLanguage] = useState<Record<number, string>>({});
   const [languageId, setLanguageId] = useState(71); // Default to Python 3
@@ -65,6 +66,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
   const pollRef = useRef<number | null>(null);
   const codeRef = useRef(code);
   const languageIdRef = useRef(languageId);
+  const questionIdRef = useRef(questionId); // Ref for questionId to use in auto-save
 
   // Keep code ref updated
   useEffect(() => {
@@ -75,6 +77,11 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
   useEffect(() => {
     languageIdRef.current = languageId;
   }, [languageId]);
+
+  // Keep questionId ref updated
+  useEffect(() => {
+    questionIdRef.current = questionId;
+  }, [questionId]);
 
   // Sync code changes to codeByLanguage for current language
   useEffect(() => {
@@ -125,6 +132,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
       }
 
       setQuestion(result.question);
+      setQuestionId(result.questionId || result.question?._id || ''); // Set questionId for code storage
       
       // Load code by language from server
       const receivedCodeByLang = result.codeByLanguage || {};
@@ -195,7 +203,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
 
     autoSaveRef.current = window.setInterval(async () => {
       try {
-        await api.student.saveCode(teamName, gmid, codeRef.current, languageIdRef.current);
+        await api.student.saveCode(teamName, gmid, codeRef.current, languageIdRef.current, questionIdRef.current);
         console.log('Code auto-saved');
       } catch (error) {
         console.error('Auto-save failed:', error);
@@ -258,7 +266,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
   const handleEventEnd = async () => {
     try {
       // Save code before ending
-      await api.student.saveCode(teamName, gmid, codeRef.current, languageIdRef.current);
+      await api.student.saveCode(teamName, gmid, codeRef.current, languageIdRef.current, questionIdRef.current);
       // Mark event as expired
       await api.student.eventExpired(teamName, gmid);
       setEventExpired(true);
@@ -273,7 +281,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
     
     try {
       // Save current code and language first
-      await api.student.saveCode(teamName, gmid, codeRef.current, languageIdRef.current);
+      await api.student.saveCode(teamName, gmid, codeRef.current, languageIdRef.current, questionIdRef.current);
       
       // Trigger shuffle
       await api.student.shuffle(teamName);
@@ -286,6 +294,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
       
       if (state.success) {
         setQuestion(state.question);
+        setQuestionId(state.questionId || state.question?._id || ''); // Update questionId after shuffle
         
         // Load code by language from server
         const receivedCodeByLang = state.codeByLanguage || {};
@@ -336,6 +345,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
         
         if (state.shuffleHappened) {
           setQuestion(state.question);
+          setQuestionId(state.questionId || state.question?._id || ''); // Update questionId after shuffle
           
           // Load code by language from server
           const receivedCodeByLang = state.codeByLanguage || {};
@@ -372,7 +382,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
       } catch (error) {
         console.error('Poll failed:', error);
       }
-    }, 3000);
+    }, 5000);  // Poll every 5 seconds (reduced from 3s for better server performance)
 
     return () => {
       if (pollRef.current) {
@@ -391,10 +401,10 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
 
     try {
       // Save code and language first
-      await api.student.saveCode(teamName, gmid, code, languageId);
+      await api.student.saveCode(teamName, gmid, code, languageId, questionId);
       
       // Run code with selected language
-      const result = await api.student.runCode(teamName, gmid, code, languageId);
+      const result = await api.student.runCode(teamName, gmid, code, languageId, questionId);
       
       if (result.error) {
         setResults([{
@@ -475,7 +485,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
             <div className="instruction-section">
               <h3>Coding Guidelines</h3>
               <ul>
-                <li>Choose from <strong>4 languages:</strong> Python 3, Java, C++, C</li>
+                <li>Choose from <strong>4 languages:</strong> Python, Java, C++, C</li>
                 <li>Each language has its own code editor - switch anytime!</li>
               </ul>
             </div>
@@ -711,6 +721,20 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
                 <option key={lang.id} value={lang.id}>{lang.name}</option>
               ))}
             </select>
+            
+            {completed && (
+              <span className="success-message">
+                ✓ All test cases passed! Waiting for teammates...
+              </span>
+            )}
+            
+            <button 
+              onClick={handleRunCode} 
+              className="run-btn"
+              disabled={running || completed || eventExpired}
+            >
+              {running ? '⏳ Running...' : '▶ Run Code'}
+            </button>
           </div>
           <div className="editor-container">
             <Editor
@@ -729,22 +753,6 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
                 automaticLayout: true,
               }}
             />
-          </div>
-
-          <div className="editor-footer">
-            <button 
-              onClick={handleRunCode} 
-              className="run-btn"
-              disabled={running || completed || eventExpired}
-            >
-              {running ? '⏳ Running...' : '▶ Run Code'}
-            </button>
-            
-            {completed && (
-              <span className="success-message">
-                ✓ All test cases passed! Waiting for teammates...
-              </span>
-            )}
           </div>
         </section>
       </main>

@@ -72,16 +72,19 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
     try {
       if (activeTab === 'teams') {
         const data = await api.admin.getTeams();
-        setTeams(data);
+        setTeams(Array.isArray(data) ? data : []);
       } else if (activeTab === 'questions') {
         const data = await api.admin.getQuestions();
-        setQuestions(data);
+        setQuestions(Array.isArray(data) ? data : []);
       } else if (activeTab === 'submissions') {
         const data = await api.admin.getSubmissions();
-        setSubmissions(data);
+        setSubmissions(Array.isArray(data) ? data : []);
       }
     } catch (error) {
       showMessage('error', 'Failed to fetch data');
+      if (activeTab === 'teams') setTeams([]);
+      else if (activeTab === 'questions') setQuestions([]);
+      else if (activeTab === 'submissions') setSubmissions([]);
     } finally {
       setLoading(false);
     }
@@ -183,6 +186,44 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
       }
     } catch (error) {
       showMessage('error', 'Failed to delete all teams');
+    }
+  };
+
+  const handleResetTeam = async (teamName: string) => {
+    if (!confirm(`Are you sure you want to reset team "${teamName}"? This will clear all progress and code.`)) return;
+    
+    setLoading(true);
+    try {
+      const result = await api.admin.resetTeam(teamName, adminSecret);
+      if (result.error) {
+        showMessage('error', result.error);
+      } else {
+        showMessage('success', `Team "${teamName}" reset successfully!`);
+        fetchData();
+      }
+    } catch (error) {
+      showMessage('error', 'Failed to reset team');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetAllTeams = async () => {
+    if (!confirm('Are you sure you want to RESET ALL teams? This will clear all progress and code for every team. This action cannot be undone!')) return;
+    
+    setLoading(true);
+    try {
+      const result = await api.admin.resetAllTeams(adminSecret);
+      if (result.error) {
+        showMessage('error', result.error);
+      } else {
+        showMessage('success', `All ${result.count || 0} teams reset successfully!`);
+        fetchData();
+      }
+    } catch (error) {
+      showMessage('error', 'Failed to reset all teams');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -765,6 +806,9 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
                   <button onClick={downloadTeamsCSV} className="action-btn csv-btn">
                     📥 Download CSV
                   </button>
+                  <button onClick={handleResetAllTeams} className="action-btn warning-btn" disabled={loading}>
+                    🔄 Reset All
+                  </button>
                   <button onClick={handleDeleteAllTeams} className="action-btn danger-btn">
                     🗑️ Delete All
                   </button>
@@ -779,26 +823,44 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
                         {team.isActive ? 'Active' : 'Inactive'}
                       </span>
                     </div>
-                    <div className="team-members">
-                      {team.members.map((member, idx) => (
-                        <div key={idx} className="member">
-                          <span className="gmid">{member.gmid}</span>
-                          {member.completed && <span className="completed">✓</span>}
+                    <div className="team-info">
+                      <div className="team-members">
+                        {team.members.map((member, idx) => (
+                          <div key={idx} className="member-item">
+                            <span className="member-number">{idx + 1}.</span>
+                            <span className="gmid">{member.gmid}</span>
+                            {member.completed && <span className="completed-badge">✓</span>}
+                          </div>
+                        ))}
+                      </div>
+                      {team.isActive && (
+                        <div className="team-stats">
+                          <span className="stat-item">{team.members.filter(m => m.completed).length}/{team.members.length} completed</span>
                         </div>
-                      ))}
+                      )}
                     </div>
                     <div className="team-actions">
                       <button 
                         onClick={() => handleEditTeam(team)}
-                        className="edit-btn"
+                        className="action-btn edit-btn-sm"
+                        title="Edit team"
                       >
                         ✏️ Edit
                       </button>
                       <button 
-                        onClick={() => handleDeleteTeam(team.teamName)}
-                        className="delete-btn"
+                        onClick={() => handleResetTeam(team.teamName)}
+                        className="action-btn reset-btn-sm"
+                        disabled={loading}
+                        title="Reset team progress"
                       >
-                        🗑️ Delete
+                        🔄 Reset
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteTeam(team.teamName)}
+                        className="action-btn delete-btn-sm"
+                        title="Delete team"
+                      >
+                        🗑️ Delete 
                       </button>
                     </div>
                   </div>
@@ -809,53 +871,64 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
             {/* Edit Team Modal */}
             {editingTeam && (
               <div className="modal-overlay" onClick={() => setEditingTeam(null)}>
-                <div className="modal" onClick={(e) => e.stopPropagation()}>
-                  <h2>Edit Team: {editingTeam.teamName}</h2>
-                  <form onSubmit={handleUpdateTeam} className="admin-form">
+                <div className="modal edit-team-modal" onClick={(e) => e.stopPropagation()}>
+                  <div className="modal-header">
+                    <h2>✏️ Edit Team</h2>
+                    <button className="close-btn" onClick={() => setEditingTeam(null)}>✕</button>
+                  </div>
+                  <form onSubmit={handleUpdateTeam} className="modal-form">
                     <div className="input-group">
                       <label>Team Name</label>
                       <input
                         type="text"
                         value={editForm.teamName}
                         onChange={(e) => setEditForm({ ...editForm, teamName: e.target.value })}
+                        placeholder="Enter team name"
                         required
                       />
                     </div>
-                    <div className="form-row three-col">
-                      <div className="input-group">
-                        <label>GMID 1</label>
-                        <input
-                          type="text"
-                          value={editForm.gmid1}
-                          onChange={(e) => setEditForm({ ...editForm, gmid1: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div className="input-group">
-                        <label>GMID 2</label>
-                        <input
-                          type="text"
-                          value={editForm.gmid2}
-                          onChange={(e) => setEditForm({ ...editForm, gmid2: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div className="input-group">
-                        <label>GMID 3</label>
-                        <input
-                          type="text"
-                          value={editForm.gmid3}
-                          onChange={(e) => setEditForm({ ...editForm, gmid3: e.target.value })}
-                          required
-                        />
+                    <div className="divider"></div>
+                    <div className="members-section">
+                      <label className="section-label">Team Members</label>
+                      <div className="member-inputs">
+                        <div className="input-group">
+                          <label>Member 1 (GMID)</label>
+                          <input
+                            type="text"
+                            value={editForm.gmid1}
+                            onChange={(e) => setEditForm({ ...editForm, gmid1: e.target.value })}
+                            placeholder="Enter GMID 1"
+                            required
+                          />
+                        </div>
+                        <div className="input-group">
+                          <label>Member 2 (GMID)</label>
+                          <input
+                            type="text"
+                            value={editForm.gmid2}
+                            onChange={(e) => setEditForm({ ...editForm, gmid2: e.target.value })}
+                            placeholder="Enter GMID 2"
+                            required
+                          />
+                        </div>
+                        <div className="input-group">
+                          <label>Member 3 (GMID)</label>
+                          <input
+                            type="text"
+                            value={editForm.gmid3}
+                            onChange={(e) => setEditForm({ ...editForm, gmid3: e.target.value })}
+                            placeholder="Enter GMID 3"
+                            required
+                          />
+                        </div>
                       </div>
                     </div>
                     <div className="modal-actions">
                       <button type="button" onClick={() => setEditingTeam(null)} className="cancel-btn">
                         Cancel
                       </button>
-                      <button type="submit" disabled={loading}>
-                        {loading ? 'Saving...' : 'Save Changes'}
+                      <button type="submit" className="save-btn" disabled={loading}>
+                        {loading ? 'Saving...' : '💾 Save Changes'}
                       </button>
                     </div>
                   </form>
@@ -1172,55 +1245,61 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
         {/* Settings Tab */}
         {activeTab === 'settings' && (
           <div className="tab-content">
-            <section className="form-section">
-              <h2>Event Settings</h2>
-              <p className="settings-info">These settings apply to all teams during the event.</p>
-              <div className="admin-form">
-                <div className="form-row">
-                  <div className="input-group">
-                    <label>Shuffle Time (seconds)</label>
-                    <input
-                      type="number"
-                      value={shuffleTime}
-                      onChange={(e) => setShuffleTime(parseInt(e.target.value) || 60)}
-                      min={10}
-                      max={600}
-                    />
-                    <span className="input-hint">Time before code is shuffled to next teammate (10-600 seconds)</span>
+            <div className="settings-layout">
+              {/* Left Side - Event Settings */}
+              <section className="form-section settings-left">
+                <h2>Event Settings</h2>
+                <p className="settings-info">Configure the timing for your coding event.</p>
+                <div className="admin-form">
+                  <div className="form-row">
+                    <div className="input-group">
+                      <label>Shuffle Time (seconds)</label>
+                      <input
+                        type="number"
+                        value={shuffleTime}
+                        onChange={(e) => setShuffleTime(parseInt(e.target.value) || 60)}
+                        min={10}
+                        max={600}
+                      />
+                      <span className="input-hint">Time before code is shuffled to next teammate</span>
+                    </div>
                   </div>
-                </div>
-                <div className="form-row">
-                  <div className="input-group">
-                    <label>Event Duration (seconds)</label>
-                    <input
-                      type="number"
-                      value={eventDuration}
-                      onChange={(e) => setEventDuration(parseInt(e.target.value) || 300)}
-                      min={60}
-                      max={3600}
-                    />
-                    <span className="input-hint">Total time for the event from when first member starts (60-3600 seconds)</span>
+                  <div className="form-row">
+                    <div className="input-group">
+                      <label>Event Duration (seconds)</label>
+                      <input
+                        type="number"
+                        value={eventDuration}
+                        onChange={(e) => setEventDuration(parseInt(e.target.value) || 300)}
+                        min={60}
+                        max={3600}
+                      />
+                      <span className="input-hint">Total time for the event from start</span>
+                    </div>
                   </div>
+                  <button onClick={handleSaveSettings} disabled={loading} className="save-settings-btn">
+                    {loading ? 'Saving...' : settingsSaved ? '✓ Saved!' : 'Save Settings'}
+                  </button>
                 </div>
-                <button onClick={handleSaveSettings} disabled={loading} className="save-settings-btn">
-                  {loading ? 'Saving...' : settingsSaved ? '✓ Saved!' : 'Save Settings'}
-                </button>
-              </div>
-            </section>
+              </section>
 
-            <section className="form-section">
-              <h2>Current Settings Summary</h2>
-              <div className="settings-summary">
-                <div className="setting-item">
-                  <span className="setting-label">Shuffle Time:</span>
-                  <span className="setting-value">{shuffleTime} seconds ({Math.floor(shuffleTime / 60)}m {shuffleTime % 60}s)</span>
+              {/* Right Side - Current Settings Summary */}
+              <section className="form-section settings-right">
+                <h2>Current Settings Summary</h2>
+                <div className="settings-summary">
+                  <div className="setting-item">
+                    <span className="setting-label">Shuffle Time:</span>
+                    <span className="setting-value">{shuffleTime} seconds</span>
+                    <span className="setting-detail">({Math.floor(shuffleTime / 60)}m {shuffleTime % 60}s)</span>
+                  </div>
+                  <div className="setting-item">
+                    <span className="setting-label">Event Duration:</span>
+                    <span className="setting-value">{eventDuration} seconds</span>
+                    <span className="setting-detail">({Math.floor(eventDuration / 60)}m {eventDuration % 60}s)</span>
+                  </div>
                 </div>
-                <div className="setting-item">
-                  <span className="setting-label">Event Duration:</span>
-                  <span className="setting-value">{eventDuration} seconds ({Math.floor(eventDuration / 60)}m {eventDuration % 60}s)</span>
-                </div>
-              </div>
-            </section>
+              </section>
+            </div>
           </div>
         )}
       </main>

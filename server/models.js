@@ -36,23 +36,20 @@ const teamSchema = new mongoose.Schema({
   teamName: {
     type: String,
     required: true,
-    unique: true
+    unique: true,
+    index: true  // Index for faster lookups
   },
   members: [{
     gmid: {
       type: String,
       required: true
     },
-    questionId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Question',
+    // Index pointing to assignedQuestions array (0, 1, or 2)
+    currentQuestionIndex: {
+      type: Number,
       default: null
     },
-    codeByLanguage: {
-      type: Map,
-      of: String,
-      default: {}
-    },
+    // Currently selected language for this member
     languageId: {
       type: Number,
       default: 71
@@ -66,6 +63,28 @@ const teamSchema = new mongoose.Schema({
       default: Date.now
     }
   }],
+  // Questions assigned to this team (array of 3 question IDs)
+  assignedQuestions: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Question'
+  }],
+  // Code stored by question ID, then by language ID
+  // Structure: { "questionId1": { "71": "python code", "62": "java code" }, ... }
+  codeByQuestion: {
+    type: Map,
+    of: {
+      type: Map,
+      of: String
+    },
+    default: {}
+  },
+  // Track last used language for each question
+  // Structure: { "questionId1": 71, "questionId2": 62, ... }
+  questionLanguages: {
+    type: Map,
+    of: Number,
+    default: {}
+  },
   currentRound: {
     type: Number,
     default: 1
@@ -78,17 +97,11 @@ const teamSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
-  shuffleTime: {
-    type: Number,
-    default: 60
-  },
-  eventDuration: {
-    type: Number,
-    default: 300
-  },
+  // NOTE: shuffleTime and eventDuration removed - always use global Settings
   isActive: {
     type: Boolean,
-    default: false
+    default: false,
+    index: true  // Index for filtering active teams
   },
   eventExpired: {
     type: Boolean,
@@ -108,11 +121,13 @@ const teamSchema = new mongoose.Schema({
 const submissionSchema = new mongoose.Schema({
   teamName: {
     type: String,
-    required: true
+    required: true,
+    index: true  // Index for faster lookups
   },
   gmid: {
     type: String,
-    required: true
+    required: true,
+    index: true  // Index for faster lookups
   },
   questionId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -151,6 +166,7 @@ const settingsSchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
+    index: true,  // Index for faster lookups
     default: 'global'
   },
   shuffleTime: {

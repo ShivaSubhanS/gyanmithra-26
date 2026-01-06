@@ -131,6 +131,15 @@ export const api = {
         body: JSON.stringify({ adminSecret })
       });
       return response.json();
+    },
+
+    resetAllTeams: async (adminSecret: string) => {
+      const response = await fetch(`${API_BASE_URL}/admin/reset-all-teams`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminSecret })
+      });
+      return response.json();
     }
   },
 
@@ -163,11 +172,11 @@ export const api = {
       return response.json();
     },
 
-    saveCode: async (teamName: string, gmid: string, code: string, languageId?: number) => {
+    saveCode: async (teamName: string, gmid: string, code: string, languageId?: number, questionId?: string) => {
       const response = await fetch(`${API_BASE_URL}/student/save-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teamName, gmid, code, languageId })
+        body: JSON.stringify({ teamName, gmid, code, languageId, questionId })
       });
       return response.json();
     },
@@ -181,11 +190,11 @@ export const api = {
       return response.json();
     },
 
-    runCode: async (teamName: string, gmid: string, code: string, languageId?: number) => {
+    runCode: async (teamName: string, gmid: string, code: string, languageId?: number, questionId?: string) => {
       const response = await fetch(`${API_BASE_URL}/student/run-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teamName, gmid, code, languageId })
+        body: JSON.stringify({ teamName, gmid, code, languageId, questionId })
       });
       return response.json();
     },

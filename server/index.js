@@ -2,19 +2,52 @@ import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import compression from 'compression';
 import { Question, Team, Submission, Settings } from './models.js';
 import axios from 'axios';
 
 dotenv.config();
 
 const app = express();
+app.use(compression()); // Compress all responses for faster transfer
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1mb' })); // Limit request body size
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Connected to MongoDB'))
+// Connect to MongoDB with connection pooling for better performance
+mongoose.connect(process.env.MONGODB_URI, {
+  maxPoolSize: 100,        // Maximum number of connections in the pool
+  minPoolSize: 10,         // Minimum number of connections in the pool
+  serverSelectionTimeoutMS: 5000,  // Timeout for server selection
+  socketTimeoutMS: 45000,  // Socket timeout
+})
+  .then(() => console.log('Connected to MongoDB with connection pooling'))
   .catch(err => console.error('MongoDB connection error:', err));
+
+// In-memory cache for settings to reduce DB calls (settings are rarely changed)
+let settingsCache = null;
+let settingsCacheTime = 0;
+const SETTINGS_CACHE_TTL = 60000; // 1 minute cache
+
+async function getSettings() {
+  const now = Date.now();
+  if (settingsCache && (now - settingsCacheTime) < SETTINGS_CACHE_TTL) {
+    return settingsCache;
+  }
+  
+  let settings = await Settings.findOne({ key: 'global' }).lean();
+  if (!settings) {
+    settings = { shuffleTime: 60, eventDuration: 300 };
+  }
+  
+  settingsCache = settings;
+  settingsCacheTime = now;
+  return settings;
+}
+
+function invalidateSettingsCache() {
+  settingsCache = null;
+  settingsCacheTime = 0;
+}
 
 // ==================== ADMIN ROUTES ====================
 
@@ -74,7 +107,7 @@ app.post('/api/admin/add-question', async (req, res) => {
 // Get all questions
 app.get('/api/admin/questions', async (req, res) => {
   try {
-    const questions = await Question.find().sort({ createdAt: -1 });
+    const questions = await Question.find().sort({ createdAt: -1 }).lean();
     res.json(questions);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -142,7 +175,7 @@ app.delete('/api/admin/all-questions', async (req, res) => {
 // Get all teams
 app.get('/api/admin/teams', async (req, res) => {
   try {
-    const teams = await Team.find().populate('members.questionId');
+    const teams = await Team.find().populate('assignedQuestions').lean();
     res.json(teams);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -154,7 +187,8 @@ app.get('/api/admin/submissions', async (req, res) => {
   try {
     const submissions = await Submission.find()
       .populate('questionId')
-      .sort({ submittedAt: -1 });
+      .sort({ submittedAt: -1 })
+      .lean();
     res.json(submissions);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -271,6 +305,10 @@ app.post('/api/admin/settings', async (req, res) => {
     settings.updatedAt = new Date();
     
     await settings.save();
+    
+    // Invalidate cache when settings change
+    invalidateSettingsCache();
+    
     res.json({ success: true, settings });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -291,18 +329,63 @@ app.post('/api/admin/reset-team/:teamName', async (req, res) => {
       return res.status(404).json({ error: 'Team not found' });
     }
 
+    // Reset member indices and completion status
     team.members.forEach(member => {
-      member.questionId = null;
-      member.code = '';
+      member.currentQuestionIndex = null;
+      member.languageId = 71;  // Reset to default Python
       member.completed = false;
+      member.lastUpdated = new Date();
     });
+    // Clear team-level questions, code, and language tracking
+    team.assignedQuestions = [];
+    team.codeByQuestion = new Map();
+    team.questionLanguages = new Map();
     team.currentRound = 1;
     team.roundStartTime = null;
+    team.eventStartTime = null;  // Reset event start time
     team.isActive = false;
+    team.eventExpired = false;  // Reset event expired flag
     team.completedAt = null;
 
     await team.save();
     res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reset all teams (for admin)
+app.post('/api/admin/reset-all-teams', async (req, res) => {
+  try {
+    const { adminSecret } = req.body;
+    
+    if (adminSecret !== process.env.ADMIN_SECRET) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // Use updateMany for bulk operation - much faster than loop
+    const result = await Team.updateMany(
+      {},
+      {
+        $set: {
+          'members.$[].currentQuestionIndex': null,
+          'members.$[].languageId': 71,
+          'members.$[].completed': false,
+          'members.$[].lastUpdated': new Date(),
+          assignedQuestions: [],
+          codeByQuestion: {},
+          questionLanguages: {},
+          currentRound: 1,
+          roundStartTime: null,
+          eventStartTime: null,
+          isActive: false,
+          eventExpired: false,
+          completedAt: null
+        }
+      }
+    );
+
+    res.json({ success: true, count: result.modifiedCount });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -315,7 +398,7 @@ app.post('/api/student/login', async (req, res) => {
   try {
     const { teamName, gmid } = req.body;
 
-    const team = await Team.findOne({ teamName });
+    const team = await Team.findOne({ teamName }).lean();
     if (!team) {
       return res.status(404).json({ error: 'Team not found' });
     }
@@ -347,17 +430,27 @@ app.post('/api/student/start-session', async (req, res) => {
       return res.status(404).json({ error: 'Team not found' });
     }
 
-    // Get global settings
-    let settings = await Settings.findOne({ key: 'global' });
-    if (!settings) {
-      settings = { shuffleTime: 60, eventDuration: 300 };
-    }
+    // Get global settings from cache
+    const settings = await getSettings();
 
     // If session already active, return current state
     if (team.isActive) {
       const memberIndex = team.members.findIndex(m => m.gmid === gmid);
       const member = team.members[memberIndex];
-      const question = await Question.findById(member.questionId);
+      
+      // Get question by member's current index
+      const questionId = team.assignedQuestions[member.currentQuestionIndex];
+      const question = await Question.findById(questionId);
+      
+      // Get code for this question from team's codeByQuestion
+      const questionIdStr = questionId.toString();
+      const codeForQuestion = team.codeByQuestion?.get(questionIdStr) || {};
+      const codeByLanguage = codeForQuestion instanceof Map 
+        ? Object.fromEntries(codeForQuestion) 
+        : codeForQuestion;
+      
+      // Get the last used language for THIS question (not the member's preference)
+      const questionLanguageId = team.questionLanguages?.get(questionIdStr) || 71;
       
       // Calculate remaining times on server side to ensure consistency across all team members
       let remainingShuffleTime = settings.shuffleTime;
@@ -377,8 +470,9 @@ app.post('/api/student/start-session', async (req, res) => {
         success: true,
         alreadyActive: true,
         question,
-        codeByLanguage: Object.fromEntries(member.codeByLanguage || new Map()),
-        languageId: member.languageId || 71,
+        questionId: questionIdStr,
+        codeByLanguage,
+        languageId: questionLanguageId,
         completed: member.completed,
         roundStartTime: team.roundStartTime,
         currentRound: team.currentRound,
@@ -392,9 +486,9 @@ app.post('/api/student/start-session', async (req, res) => {
     }
 
     // Get random questions - one easy, one medium, one hard
-    const easyQuestions = await Question.find({ difficulty: 'easy' });
-    const mediumQuestions = await Question.find({ difficulty: 'medium' });
-    const hardQuestions = await Question.find({ difficulty: 'hard' });
+    const easyQuestions = await Question.find({ difficulty: 'easy' }).lean();
+    const mediumQuestions = await Question.find({ difficulty: 'medium' }).lean();
+    const hardQuestions = await Question.find({ difficulty: 'hard' }).lean();
     
     if (easyQuestions.length < 1 || mediumQuestions.length < 1 || hardQuestions.length < 1) {
       return res.status(400).json({ 
@@ -409,10 +503,21 @@ app.post('/api/student/start-session', async (req, res) => {
       hardQuestions[Math.floor(Math.random() * hardQuestions.length)]
     ];
 
-    // Assign questions to members (easy, medium, hard)
+    // Store question IDs at team level
+    team.assignedQuestions = selectedQuestions.map(q => q._id);
+    
+    // Initialize empty code storage and default language for each question
+    team.codeByQuestion = new Map();
+    team.questionLanguages = new Map();
+    selectedQuestions.forEach(q => {
+      const qIdStr = q._id.toString();
+      team.codeByQuestion.set(qIdStr, new Map());
+      team.questionLanguages.set(qIdStr, 71); // Default to Python
+    });
+
+    // Assign question indices to members (0=easy, 1=medium, 2=hard)
     for (let i = 0; i < team.members.length; i++) {
-      team.members[i].questionId = selectedQuestions[i]._id;
-      team.members[i].codeByLanguage = new Map();
+      team.members[i].currentQuestionIndex = i;
       team.members[i].completed = false;
     }
 
@@ -435,7 +540,8 @@ app.post('/api/student/start-session', async (req, res) => {
     res.json({
       success: true,
       question: memberQuestion,
-      codeByLanguage: Object.fromEntries(team.members[memberIndex].codeByLanguage || new Map()),
+      questionId: memberQuestion._id.toString(),
+      codeByLanguage: {},
       languageId: team.members[memberIndex].languageId || 71,
       completed: false,
       roundStartTime: team.roundStartTime,
@@ -457,18 +563,27 @@ app.post('/api/student/get-state', async (req, res) => {
   try {
     const { teamName, gmid } = req.body;
 
-    const team = await Team.findOne({ teamName }).populate('members.questionId');
+    const team = await Team.findOne({ teamName }).populate('assignedQuestions').lean();
     if (!team) {
       return res.status(404).json({ error: 'Team not found' });
     }
 
-    // Get global settings
-    let settings = await Settings.findOne({ key: 'global' });
-    if (!settings) {
-      settings = { shuffleTime: 60, eventDuration: 300 };
-    }
+    // Get global settings from cache
+    const settings = await getSettings();
 
     const memberIndex = team.members.findIndex(m => m.gmid === gmid);
+    const member = team.members[memberIndex];
+    
+    // Get question by member's current index
+    const question = team.assignedQuestions?.[member.currentQuestionIndex] || null;
+    const questionIdStr = question?._id?.toString() || '';
+    
+    // Get code for this question from team's codeByQuestion
+    const codeByLanguage = team.codeByQuestion?.[questionIdStr] || {};
+    
+    // Get the last used language for THIS question
+    const questionLanguageId = team.questionLanguages?.[questionIdStr] || 71;
+    
     // Calculate remaining times on server side to ensure consistency across all team members
     let remainingShuffleTime = settings.shuffleTime;
     let remainingEventTime = settings.eventDuration;
@@ -485,9 +600,10 @@ app.post('/api/student/get-state', async (req, res) => {
     
     res.json({
       success: true,
-      question: member.questionId,
-      codeByLanguage: Object.fromEntries(member.codeByLanguage || new Map()),
-      languageId: member.languageId || 71,
+      question,
+      questionId: questionIdStr,
+      codeByLanguage,
+      languageId: questionLanguageId,
       completed: member.completed,
       roundStartTime: team.roundStartTime,
       currentRound: team.currentRound,
@@ -498,13 +614,7 @@ app.post('/api/student/get-state', async (req, res) => {
       eventDuration: settings.eventDuration,
       eventExpired: team.eventExpired,
       remainingShuffleTime,
-      remainingEventTime,
-      isActive: team.isActive,
-      allCompleted: team.members.every(m => m.completed),
-      eventStartTime: team.eventStartTime,
-      shuffleTime: settings.shuffleTime,
-      eventDuration: settings.eventDuration,
-      eventExpired: team.eventExpired
+      remainingEventTime
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -512,33 +622,42 @@ app.post('/api/student/get-state', async (req, res) => {
 });
 
 // Save code (auto-save every 10 seconds)
+// Code is stored by questionId at team level, not per member
 app.post('/api/student/save-code', async (req, res) => {
   try {
-    const { teamName, gmid, code, languageId } = req.body;
+    const { teamName, gmid, code, languageId, questionId } = req.body;
 
-    const team = await Team.findOne({ teamName });
-    if (!team) {
-      return res.status(404).json({ error: 'Team not found' });
+    if (!questionId) {
+      return res.status(400).json({ error: 'questionId is required' });
     }
 
-    const memberIndex = team.members.findIndex(m => m.gmid === gmid);
-    if (memberIndex === -1) {
-      return res.status(404).json({ error: 'Member not found' });
-    }
+    // Update code in team's codeByQuestion and track language for this question
+    const result = await Team.updateOne(
+      { 
+        teamName,
+        'members.gmid': gmid,
+        'members.completed': { $ne: true }  // Don't update if already completed
+      },
+      {
+        $set: {
+          [`codeByQuestion.${questionId}.${languageId}`]: code,
+          [`questionLanguages.${questionId}`]: languageId, // Track last used language for this question
+          'members.$.lastUpdated': new Date()
+        }
+      }
+    );
 
-    // Don't save if already completed
-    if (team.members[memberIndex].completed) {
-      return res.json({ success: true, message: 'Already completed' });
+    // If no document was modified, check if it's because they're completed
+    if (result.matchedCount === 0) {
+      const team = await Team.findOne({ teamName, 'members.gmid': gmid }).lean();
+      if (team) {
+        const member = team.members.find(m => m.gmid === gmid);
+        if (member && member.completed) {
+          return res.json({ success: true, message: 'Already completed' });
+        }
+      }
+      return res.status(404).json({ error: 'Team or member not found' });
     }
-
-    // Save code for specific language
-    if (!team.members[memberIndex].codeByLanguage) {
-      team.members[memberIndex].codeByLanguage = new Map();
-    }
-    team.members[memberIndex].codeByLanguage.set(String(languageId), code);
-    if (languageId) team.members[memberIndex].languageId = languageId;
-    team.members[memberIndex].lastUpdated = new Date();
-    await team.save();
 
     res.json({ success: true });
   } catch (error) {
@@ -546,44 +665,40 @@ app.post('/api/student/save-code', async (req, res) => {
   }
 });
 
-// Shuffle code between team members (called when timer ends)
+// Shuffle questions between team members (called when timer ends)
+// Only rotates the question index - no code data movement needed!
 app.post('/api/student/shuffle', async (req, res) => {
   try {
     const { teamName } = req.body;
 
-    const team = await Team.findOne({ teamName }).populate('members.questionId');
+    const team = await Team.findOne({ teamName });
     if (!team) {
       return res.status(404).json({ error: 'Team not found' });
     }
 
     // Get indices of members who haven't completed
-    const incompleteIndices = team.members
-      .map((m, i) => (!m.completed ? i : -1))
-      .filter(i => i !== -1);
+    const incompleteMembers = team.members
+      .map((m, i) => ({ memberIdx: i, questionIdx: m.currentQuestionIndex, completed: m.completed }))
+      .filter(m => !m.completed);
 
     // If all completed or only one incomplete, no shuffle needed
-    if (incompleteIndices.length <= 1) {
+    if (incompleteMembers.length <= 1) {
       team.roundStartTime = new Date();
       team.currentRound += 1;
       await team.save();
       return res.json({ success: true, message: 'No shuffle needed' });
     }
 
-    // Create a shuffled version of the incomplete members' data
-    const shuffledData = incompleteIndices.map(i => ({
-      questionId: team.members[i].questionId,
-      codeByLanguage: team.members[i].codeByLanguage || new Map(),
-      languageId: team.members[i].languageId || 71
-    }));
+    // Get the question indices of incomplete members
+    const questionIndices = incompleteMembers.map(m => m.questionIdx);
+    
+    // Rotate the question indices (shift by 1): [0, 1, 2] -> [1, 2, 0]
+    const rotatedIndices = [...questionIndices.slice(1), questionIndices[0]];
 
-    // Rotate the data (shift by 1)
-    const rotatedData = [...shuffledData.slice(1), shuffledData[0]];
-
-    // Apply the rotated data back to incomplete members
-    incompleteIndices.forEach((memberIdx, dataIdx) => {
-      team.members[memberIdx].questionId = rotatedData[dataIdx].questionId._id || rotatedData[dataIdx].questionId;
-      team.members[memberIdx].codeByLanguage = rotatedData[dataIdx].codeByLanguage;
-      team.members[memberIdx].languageId = rotatedData[dataIdx].languageId;
+    // Apply the rotated indices back to incomplete members
+    // This is all that's needed - code stays with its question!
+    incompleteMembers.forEach((m, i) => {
+      team.members[m.memberIdx].currentQuestionIndex = rotatedIndices[i];
     });
 
     team.roundStartTime = new Date();
@@ -599,9 +714,9 @@ app.post('/api/student/shuffle', async (req, res) => {
 // Run code against Judge0
 app.post('/api/student/run-code', async (req, res) => {
   try {
-    const { teamName, gmid, code, languageId } = req.body;
+    const { teamName, gmid, code, languageId, questionId } = req.body;
 
-    const team = await Team.findOne({ teamName }).populate('members.questionId');
+    const team = await Team.findOne({ teamName }).populate('assignedQuestions');
     if (!team) {
       return res.status(404).json({ error: 'Team not found' });
     }
@@ -612,7 +727,9 @@ app.post('/api/student/run-code', async (req, res) => {
     }
 
     const member = team.members[memberIndex];
-    const question = member.questionId;
+    
+    // Get question by member's current index
+    const question = team.assignedQuestions[member.currentQuestionIndex];
 
     if (!question || !question.testCases || question.testCases.length === 0) {
       return res.status(400).json({ error: 'No test cases found for this question' });
@@ -637,7 +754,8 @@ app.post('/api/student/run-code', async (req, res) => {
               headers: { 
                 'Content-Type': 'application/json',
                 'User-Agent': 'BrainwaveBuzzer/1.0'
-              }
+              },
+              timeout: 30000  // 30 second timeout to prevent hanging
             }
           );
 
@@ -691,15 +809,16 @@ app.post('/api/student/run-code', async (req, res) => {
     // If all test cases passed, mark as completed
     if (allPassed) {
       team.members[memberIndex].completed = true;
-      team.members[memberIndex].code = code;
-      await team.save();
-
+      // Note: code is already saved in codeByQuestion via save-code endpoint
+      
       // Check if all team members completed
       const allCompleted = team.members.every(m => m.completed);
       if (allCompleted) {
         team.completedAt = new Date();
-        await team.save();
       }
+      
+      // Single save for all changes
+      await team.save();
     }
 
     res.json({
@@ -721,22 +840,29 @@ app.post('/api/student/check-shuffle', async (req, res) => {
   try {
     const { teamName, gmid, clientRound } = req.body;
 
-    const team = await Team.findOne({ teamName }).populate('members.questionId');
+    const team = await Team.findOne({ teamName }).populate('assignedQuestions').lean();
     if (!team) {
       return res.status(404).json({ error: 'Team not found' });
     }
 
-    // Get global settings
-    let settings = await Settings.findOne({ key: 'global' });
-    if (!settings) {
-      settings = { shuffleTime: 60, eventDuration: 300 };
-    }
+    // Get global settings from cache
+    const settings = await getSettings();
 
     const memberIndex = team.members.findIndex(m => m.gmid === gmid);
     const member = team.members[memberIndex];
 
     // Check if round changed (meaning shuffle happened)
     const shuffleHappened = team.currentRound > clientRound;
+
+    // Get question by member's current index
+    const question = team.assignedQuestions?.[member.currentQuestionIndex] || null;
+    const questionIdStr = question?._id?.toString() || '';
+    
+    // Get code for this question from team's codeByQuestion
+    const codeByLanguage = team.codeByQuestion?.[questionIdStr] || {};
+
+    // Get the last used language for THIS question
+    const questionLanguageId = team.questionLanguages?.[questionIdStr] || 71;
 
     // Calculate remaining times on server side to ensure consistency across all team members
     let remainingShuffleTime = settings.shuffleTime;
@@ -756,9 +882,10 @@ app.post('/api/student/check-shuffle', async (req, res) => {
       success: true,
       currentRound: team.currentRound,
       shuffleHappened,
-      question: member.questionId,
-      codeByLanguage: Object.fromEntries(member.codeByLanguage || new Map()),
-      languageId: member.languageId || 71,
+      question,
+      questionId: questionIdStr,
+      codeByLanguage,
+      languageId: questionLanguageId,
       completed: member.completed,
       roundStartTime: team.roundStartTime,
       eventStartTime: team.eventStartTime,
