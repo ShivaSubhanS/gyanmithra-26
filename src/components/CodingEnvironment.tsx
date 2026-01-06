@@ -286,13 +286,18 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
       // Trigger shuffle
       await api.student.shuffle(teamName);
       
-      // Wait a moment for shuffle to complete
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait a moment for shuffle to complete on server
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // Fetch new state
-      const state = await api.student.getState(teamName, gmid);
+      // Fetch new state (retry up to 3 times if needed)
+      let state = null;
+      for (let i = 0; i < 3; i++) {
+        state = await api.student.getState(teamName, gmid);
+        if (state.success) break;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
       
-      if (state.success) {
+      if (state?.success) {
         setQuestion(state.question);
         setQuestionId(state.questionId || state.question?._id || ''); // Update questionId after shuffle
         
@@ -331,6 +336,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
     } catch (error) {
       console.error('Shuffle failed:', error);
     } finally {
+      // Only hide loading after everything is done
       setShuffling(false);
     }
   };
@@ -344,6 +350,9 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
         const state = await api.student.checkShuffle(teamName, gmid, currentRound);
         
         if (state.shuffleHappened) {
+          // Show shuffling UI when another team member triggers shuffle
+          setShuffling(true);
+          
           setQuestion(state.question);
           setQuestionId(state.questionId || state.question?._id || ''); // Update questionId after shuffle
           
@@ -378,6 +387,9 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
           if (state.remainingEventTime !== undefined) {
             setEventTimeLeft(state.remainingEventTime);
           }
+          
+          // Hide shuffling UI after a brief moment to ensure smooth transition
+          setTimeout(() => setShuffling(false), 500);
         }
       } catch (error) {
         console.error('Poll failed:', error);
