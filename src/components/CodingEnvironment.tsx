@@ -149,8 +149,12 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
       setShuffleTime(sTime);
       setEventDuration(eDuration);
 
-      // Calculate remaining shuffle time from roundStartTime
-      if (result.roundStartTime) {
+      // Use server-calculated remaining times for consistency across team members
+      // This ensures all team members see the exact same countdown regardless of when they log in
+      if (result.remainingShuffleTime !== undefined) {
+        setTimeLeft(result.remainingShuffleTime);
+      } else if (result.roundStartTime) {
+        // Fallback to client calculation if server doesn't provide remainingShuffleTime
         const elapsed = Math.floor((Date.now() - new Date(result.roundStartTime).getTime()) / 1000);
         const remaining = Math.max(0, sTime - elapsed);
         setTimeLeft(remaining);
@@ -158,8 +162,14 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
         setTimeLeft(sTime);
       }
       
-      // Calculate remaining event time from eventStartTime
-      if (result.eventStartTime) {
+      // Use server-calculated remaining event time for consistency across team members
+      if (result.remainingEventTime !== undefined) {
+        setEventTimeLeft(result.remainingEventTime);
+        if (result.remainingEventTime <= 0) {
+          setEventExpired(true);
+        }
+      } else if (result.eventStartTime) {
+        // Fallback to client calculation if server doesn't provide remainingEventTime
         const eventElapsed = Math.floor((Date.now() - new Date(result.eventStartTime).getTime()) / 1000);
         const eventRemaining = Math.max(0, eDuration - eventElapsed);
         setEventTimeLeft(eventRemaining);
@@ -293,7 +303,19 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
         setCompleted(state.completed);
         setCurrentRound(state.currentRound);
         setAllCompleted(state.allCompleted);
-        setTimeLeft(state.shuffleTime || shuffleTime);
+        
+        // Use server-calculated remaining time for consistency across team members
+        if (state.remainingShuffleTime !== undefined) {
+          setTimeLeft(state.remainingShuffleTime);
+        } else {
+          setTimeLeft(state.shuffleTime || shuffleTime);
+        }
+        
+        // Also update event timer with server-calculated time
+        if (state.remainingEventTime !== undefined) {
+          setEventTimeLeft(state.remainingEventTime);
+        }
+        
         setResults([]);
         setShowResults(false);
       }
@@ -331,12 +353,20 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
           setCompleted(state.completed);
           setCurrentRound(state.currentRound);
           
-          // Recalculate time
-          if (state.roundStartTime) {
+          // Use server-calculated remaining time for consistency across team members
+          if (state.remainingShuffleTime !== undefined) {
+            setTimeLeft(state.remainingShuffleTime);
+          } else if (state.roundStartTime) {
+            // Fallback to client calculation if server doesn't provide remainingShuffleTime
             const sTime = state.shuffleTime || shuffleTime;
             const elapsed = Math.floor((Date.now() - new Date(state.roundStartTime).getTime()) / 1000);
             const remaining = Math.max(0, sTime - elapsed);
             setTimeLeft(remaining);
+          }
+          
+          // Also update event timer with server-calculated time
+          if (state.remainingEventTime !== undefined) {
+            setEventTimeLeft(state.remainingEventTime);
           }
         }
       } catch (error) {

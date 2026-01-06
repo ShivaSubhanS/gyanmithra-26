@@ -359,6 +359,20 @@ app.post('/api/student/start-session', async (req, res) => {
       const member = team.members[memberIndex];
       const question = await Question.findById(member.questionId);
       
+      // Calculate remaining times on server side to ensure consistency across all team members
+      let remainingShuffleTime = settings.shuffleTime;
+      let remainingEventTime = settings.eventDuration;
+      
+      if (team.roundStartTime) {
+        const elapsedShuffle = Math.floor((Date.now() - new Date(team.roundStartTime).getTime()) / 1000);
+        remainingShuffleTime = Math.max(0, settings.shuffleTime - elapsedShuffle);
+      }
+      
+      if (team.eventStartTime) {
+        const elapsedEvent = Math.floor((Date.now() - new Date(team.eventStartTime).getTime()) / 1000);
+        remainingEventTime = Math.max(0, settings.eventDuration - elapsedEvent);
+      }
+      
       return res.json({
         success: true,
         alreadyActive: true,
@@ -371,7 +385,9 @@ app.post('/api/student/start-session', async (req, res) => {
         eventStartTime: team.eventStartTime,
         shuffleTime: settings.shuffleTime,
         eventDuration: settings.eventDuration,
-        eventExpired: team.eventExpired
+        eventExpired: team.eventExpired,
+        remainingShuffleTime,
+        remainingEventTime
       });
     }
 
@@ -412,6 +428,10 @@ app.post('/api/student/start-session', async (req, res) => {
     const memberIndex = team.members.findIndex(m => m.gmid === gmid);
     const memberQuestion = selectedQuestions[memberIndex];
 
+    // Calculate remaining times on server side to ensure consistency across all team members
+    const remainingShuffleTime = settings.shuffleTime; // Just started, so full time
+    const remainingEventTime = settings.eventDuration; // Just started, so full time
+
     res.json({
       success: true,
       question: memberQuestion,
@@ -423,7 +443,9 @@ app.post('/api/student/start-session', async (req, res) => {
       eventStartTime: team.eventStartTime,
       shuffleTime: settings.shuffleTime,
       eventDuration: settings.eventDuration,
-      eventExpired: false
+      eventExpired: false,
+      remainingShuffleTime,
+      remainingEventTime
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -447,11 +469,19 @@ app.post('/api/student/get-state', async (req, res) => {
     }
 
     const memberIndex = team.members.findIndex(m => m.gmid === gmid);
-    if (memberIndex === -1) {
-      return res.status(404).json({ error: 'Member not found' });
+    // Calculate remaining times on server side to ensure consistency across all team members
+    let remainingShuffleTime = settings.shuffleTime;
+    let remainingEventTime = settings.eventDuration;
+    
+    if (team.roundStartTime) {
+      const elapsedShuffle = Math.floor((Date.now() - new Date(team.roundStartTime).getTime()) / 1000);
+      remainingShuffleTime = Math.max(0, settings.shuffleTime - elapsedShuffle);
     }
-
-    const member = team.members[memberIndex];
+    
+    if (team.eventStartTime) {
+      const elapsedEvent = Math.floor((Date.now() - new Date(team.eventStartTime).getTime()) / 1000);
+      remainingEventTime = Math.max(0, settings.eventDuration - elapsedEvent);
+    }
     
     res.json({
       success: true,
@@ -461,6 +491,14 @@ app.post('/api/student/get-state', async (req, res) => {
       completed: member.completed,
       roundStartTime: team.roundStartTime,
       currentRound: team.currentRound,
+      isActive: team.isActive,
+      allCompleted: team.members.every(m => m.completed),
+      eventStartTime: team.eventStartTime,
+      shuffleTime: settings.shuffleTime,
+      eventDuration: settings.eventDuration,
+      eventExpired: team.eventExpired,
+      remainingShuffleTime,
+      remainingEventTime,
       isActive: team.isActive,
       allCompleted: team.members.every(m => m.completed),
       eventStartTime: team.eventStartTime,
@@ -700,6 +738,20 @@ app.post('/api/student/check-shuffle', async (req, res) => {
     // Check if round changed (meaning shuffle happened)
     const shuffleHappened = team.currentRound > clientRound;
 
+    // Calculate remaining times on server side to ensure consistency across all team members
+    let remainingShuffleTime = settings.shuffleTime;
+    let remainingEventTime = settings.eventDuration;
+    
+    if (team.roundStartTime) {
+      const elapsedShuffle = Math.floor((Date.now() - new Date(team.roundStartTime).getTime()) / 1000);
+      remainingShuffleTime = Math.max(0, settings.shuffleTime - elapsedShuffle);
+    }
+    
+    if (team.eventStartTime) {
+      const elapsedEvent = Math.floor((Date.now() - new Date(team.eventStartTime).getTime()) / 1000);
+      remainingEventTime = Math.max(0, settings.eventDuration - elapsedEvent);
+    }
+
     res.json({
       success: true,
       currentRound: team.currentRound,
@@ -712,7 +764,9 @@ app.post('/api/student/check-shuffle', async (req, res) => {
       eventStartTime: team.eventStartTime,
       shuffleTime: settings.shuffleTime,
       eventDuration: settings.eventDuration,
-      eventExpired: team.eventExpired
+      eventExpired: team.eventExpired,
+      remainingShuffleTime,
+      remainingEventTime
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
