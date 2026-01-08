@@ -53,6 +53,7 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
   const [completed, setCompleted] = useState(false);
   const [allCompleted, setAllCompleted] = useState(false);
   const [eventExpired, setEventExpired] = useState(false);
+  const [compilingAfterEvent, setCompilingAfterEvent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<TestResult[]>([]);
@@ -251,6 +252,10 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
           handleEventEnd();
           return 0;
         }
+        // If event time is less than shuffle time, correct the shuffle timer
+        if (prev - 1 < timeLeft) {
+          setTimeLeft(prev - 1);
+        }
         return prev - 1;
       });
     }, 1000);
@@ -262,16 +267,65 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
     };
   }, [sessionStarted, allCompleted, eventExpired, eventTimeLeft]);
 
-  // Handle event end - save code and mark as expired
+  // Handle event end - save code, show compilation screen, run validation in background, then show results
   const handleEventEnd = async () => {
     try {
       // Save code before ending
       await api.student.saveCode(teamName, gmid, codeRef.current, languageIdRef.current, questionIdRef.current);
-      // Mark event as expired
+      
+      // Show compilation screen immediately - prevent any further coding
+      setCompilingAfterEvent(true);
+      
+      // Mark event as expired first
       await api.student.eventExpired(teamName, gmid);
+      
+      // Run compilation and validation in the background
+      if (codeRef.current && !completed) {
+        try {
+          const result = await api.student.runCode(
+            teamName, 
+            gmid, 
+            codeRef.current, 
+            languageIdRef.current, 
+            questionIdRef.current
+          );
+          
+          if (result.error) {
+            setResults([{
+              input: '',
+              expectedOutput: '',
+              actualOutput: result.error,
+              passed: false,
+              status: 'Error'
+            }]);
+          } else {
+            setResults(result.results);
+            
+            if (result.allPassed) {
+              setCompleted(true);
+              setAllCompleted(result.allTeamCompleted);
+            }
+          }
+        } catch (runError) {
+          console.error('Final validation failed:', runError);
+          setResults([{
+            input: '',
+            expectedOutput: '',
+            actualOutput: 'Failed to validate code at event end',
+            passed: false,
+            status: 'Error'
+          }]);
+        }
+      }
+      
+      // After compilation completes, hide compilation screen and show results
+      setCompilingAfterEvent(false);
       setEventExpired(true);
+      setShowResults(true);
     } catch (error) {
       console.error('Event end failed:', error);
+      setCompilingAfterEvent(false);
+      setEventExpired(true);
     }
   };
 
@@ -545,12 +599,103 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
     );
   }
 
+  if (compilingAfterEvent) {
+    return (
+      <div className="coding-env">
+        <div className="compilation-screen">
+          <div className="compilation-content">
+            <div className="compilation-spinner"></div>
+            <h1>⏳ Event Time Expired!</h1>
+            <p className="compilation-message">Compiling and validating your code...</p>
+            <div className="compilation-info">
+              <p>Please wait while we test your solution against all test cases.</p>
+              <p>Your results will be displayed shortly.</p>
+            </div>
+            <div className="loading-dots">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (eventExpired) {
     return (
       <div className="coding-env">
         <div className="completion-screen expired">
-          <h1> Event Time Expired!</h1>
-          <p>The event time has ended. Your code has been saved.</p>
+          <h1>⏰ Event Time Expired!</h1>
+          <p className="expired-message">Your code has been saved and validated.</p>
+          
+          {/* Show results if available */}
+          {results.length > 0 && (() => {
+            const passedCount = results.filter(r => r.passed).length;
+            const totalCount = results.length;
+            const percentage = Math.round((passedCount / totalCount) * 100);
+            
+            return (
+              <div className="final-results">
+                <div className="results-header">
+                  <h2>📊 Final Test Results</h2>
+                </div>
+                
+                <div className="final-progress">
+                  <div className="final-score">
+                    <span className="score-label">Your Score</span>
+                    <span className={`score-value ${percentage === 100 ? 'perfect' : percentage >= 50 ? 'good' : 'needs-work'}`}>
+                      {percentage}%
+                    </span>
+                  </div>
+                  <div className="final-stats">
+                    <div className="final-stat success">
+                      <span className="stat-icon">✓</span>
+                      <span className="stat-text">{passedCount} Passed</span>
+                    </div>
+                    <div className="final-stat failure">
+                      <span className="stat-icon">✗</span>
+                      <span className="stat-text">{totalCount - passedCount} Failed</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="final-test-cases">
+                  {results.map((result, idx) => (
+                    <details key={idx} className={`test-case-detail ${result.passed ? 'passed' : 'failed'}`}>
+                      <summary>
+                        <span className="test-number">Test Case {idx + 1}</span>
+                        <span className={`test-status ${result.passed ? 'success' : 'error'}`}>
+                          {result.passed ? '✓ Passed' : '✗ Failed'}
+                        </span>
+                      </summary>
+                      <div className="test-case-content">
+                        <div className="test-row">
+                          <strong>Input:</strong>
+                          <code>{result.input}</code>
+                        </div>
+                        <div className="test-row">
+                          <strong>Expected:</strong>
+                          <code>{result.expectedOutput}</code>
+                        </div>
+                        <div className="test-row">
+                          <strong>Output:</strong>
+                          <code>{result.actualOutput}</code>
+                        </div>
+                        {result.status && (
+                          <div className="test-row">
+                            <strong>Status:</strong>
+                            <span>{result.status}</span>
+                          </div>
+                        )}
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+          
           <button onClick={onLogout} className="logout-btn">
             Exit
           </button>
@@ -643,54 +788,83 @@ export default function CodingEnvironment({ teamName, gmid, onLogout }: CodingEn
             <div className="results-panel">
               <h3>Test Results</h3>
               
-              {/* Summary stats */}
-              {results.length > 0 && (
-                <div className="results-summary">
-                  <div className="summary-stat">
-                    <strong>Passed:</strong> {results.filter(r => r.passed).length} / {results.length}
-                  </div>
-                  {eventExpired && (
-                    <div className="summary-stat score">
-                      <strong>Final Score:</strong> {Math.round((results.filter(r => r.passed).length / results.length) * 100)}%
+              {/* Progress Bar & Summary */}
+              {results.length > 0 && (() => {
+                const passedCount = results.filter(r => r.passed).length;
+                const totalCount = results.length;
+                const percentage = Math.round((passedCount / totalCount) * 100);
+                
+                return (
+                  <div className="results-progress">
+                    <div className="progress-header">
+                      <span className="progress-label">{passedCount} / {totalCount} Passed</span>
+                      <span className="progress-percentage">{percentage}%</span>
                     </div>
-                  )}
-                </div>
-              )}
+                    <div className="progress-bar-container">
+                      <div 
+                        className={`progress-bar-fill ${percentage === 100 ? 'complete' : percentage >= 50 ? 'good' : 'needs-work'}`}
+                        style={{ width: `${percentage}%` }}
+                      >
+                        {percentage > 10 && <span className="progress-bar-text">{percentage}%</span>}
+                      </div>
+                    </div>
+                    <div className="stats-row">
+                      <div className="stat-item success">
+                        <div className="stat-icon">✓</div>
+                        <div className="stat-value">{passedCount}</div>
+                      </div>
+                      <div className="stat-item failure">
+                        <div className="stat-icon">✗</div>
+                        <div className="stat-value">{totalCount - passedCount}</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
               
               <div className="results-list">
                 {/* Show only first test case details during event */}
                 {!eventExpired && results.slice(0, 1).map((result, idx) => (
-                  <div 
-                    key={idx} 
-                    className={`result-item ${result.passed ? 'passed' : 'failed'}`}
-                  >
-                    <div className="result-header">
-                      <span>Sample Test Case</span>
-                      <span className={`result-badge ${result.passed ? 'badge-pass' : 'badge-fail'}`}>
-                        {result.passed ? '✓ Passed' : '✗ Failed'}
+                  <div key={idx} className={`result-card ${result.passed ? 'passed' : 'failed'}`}>
+                    <div className="card-header">
+                      <span className="card-title">Sample Test Case</span>
+                      <span className={`status-badge ${result.passed ? 'success' : 'error'}`}>
+                        {result.passed ? '✓' : '✗'}
                       </span>
                     </div>
-                    <div className="result-details">
-                      <div><strong>Input:</strong> <code>{result.input}</code></div>
-                      <div><strong>Expected:</strong> <code>{result.expectedOutput}</code></div>
-                      <div><strong>Output:</strong> <code>{result.actualOutput}</code></div>
-                      {result.status && <div><strong>Status:</strong> {result.status}</div>}
+                    <div className="card-body">
+                      <div className="io-row">
+                        <span className="io-label">Input:</span>
+                        <code className="io-value">{result.input}</code>
+                      </div>
+                      <div className="io-row">
+                        <span className="io-label">Expected:</span>
+                        <code className="io-value">{result.expectedOutput}</code>
+                      </div>
+                      <div className="io-row">
+                        <span className="io-label">Output:</span>
+                        <code className="io-value">{result.actualOutput}</code>
+                      </div>
+                      {result.status && (
+                        <div className="io-row">
+                          <span className="io-label">Status:</span>
+                          <span className="status-text">{result.status}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
                 
                 {/* Show remaining hidden test results as pass/fail only during event */}
                 {!eventExpired && results.length > 1 && (
-                  <div className="hidden-tests-list">
+                  <div className="hidden-tests-grid">
                     {results.slice(1).map((result, idx) => (
                       <div 
                         key={idx + 1} 
-                        className={`hidden-test-item ${result.passed ? 'passed' : 'failed'}`}
+                        className={`test-chip ${result.passed ? 'passed' : 'failed'}`}
                       >
-                        <span>Hidden Test Case {idx + 1}</span>
-                        <span className={`result-badge ${result.passed ? 'badge-pass' : 'badge-fail'}`}>
-                          {result.passed ? '✓ Passed' : '✗ Incorrect'}
-                        </span>
+                        <span className="chip-icon">{result.passed ? '✓' : '✗'}</span>
+                        <span className="chip-label">Test {idx + 2}</span>
                       </div>
                     ))}
                   </div>
