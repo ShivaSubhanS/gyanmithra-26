@@ -1,1 +1,1 @@
-curl --request POST --url "http://172.16.1.170/submissions/?wait=true" --header "Content-Type: application/json" --header "User-Agent: insomnia/12.2.0" --data "{ \"language_id\": 70, \"source_code\": \"print 'Testing Over Internett'\", \"stdin\": \"\" }"
+curl --request POST --url "http://172.16.2.178/submissions/?wait=true" --header "Content-Type: application/json" --header "User-Agent: insomnia/12.2.0" --data "{ \"language_id\": 70, \"source_code\": \"print 'Testing Over Internett'\", \"stdin\": \"\" }"
