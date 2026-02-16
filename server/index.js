@@ -33,12 +33,12 @@ async function getSettings() {
   if (settingsCache && (now - settingsCacheTime) < SETTINGS_CACHE_TTL) {
     return settingsCache;
   }
-  
+
   let settings = await Settings.findOne({ key: 'global' }).lean();
   if (!settings) {
     settings = { shuffleTime: 60, eventDuration: 300 };
   }
-  
+
   settingsCache = settings;
   settingsCacheTime = now;
   return settings;
@@ -55,7 +55,7 @@ function invalidateSettingsCache() {
 app.post('/api/admin/register-team', async (req, res) => {
   try {
     const { teamName, gmid1, gmid2, gmid3, adminSecret } = req.body;
-    
+
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -85,7 +85,7 @@ app.post('/api/admin/register-team', async (req, res) => {
 app.post('/api/admin/add-question', async (req, res) => {
   try {
     const { title, description, difficulty, testCases, adminSecret } = req.body;
-    
+
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -118,7 +118,7 @@ app.get('/api/admin/questions', async (req, res) => {
 app.delete('/api/admin/questions/:id', async (req, res) => {
   try {
     const { adminSecret } = req.body;
-    
+
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -134,7 +134,7 @@ app.delete('/api/admin/questions/:id', async (req, res) => {
 app.put('/api/admin/questions/:id', async (req, res) => {
   try {
     const { adminSecret, title, description, difficulty, testCases } = req.body;
-    
+
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -160,7 +160,7 @@ app.put('/api/admin/questions/:id', async (req, res) => {
 app.delete('/api/admin/all-questions', async (req, res) => {
   try {
     const { adminSecret } = req.body;
-    
+
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -199,7 +199,7 @@ app.get('/api/admin/submissions', async (req, res) => {
 app.delete('/api/admin/submissions', async (req, res) => {
   try {
     const { adminSecret } = req.body;
-    
+
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -215,7 +215,7 @@ app.delete('/api/admin/submissions', async (req, res) => {
 app.delete('/api/admin/teams/:teamName', async (req, res) => {
   try {
     const { adminSecret } = req.body;
-    
+
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -231,7 +231,7 @@ app.delete('/api/admin/teams/:teamName', async (req, res) => {
 app.delete('/api/admin/teams', async (req, res) => {
   try {
     const { adminSecret } = req.body;
-    
+
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -248,7 +248,7 @@ app.delete('/api/admin/teams', async (req, res) => {
 app.put('/api/admin/teams/:teamName', async (req, res) => {
   try {
     const { adminSecret, newTeamName, gmid1, gmid2, gmid3 } = req.body;
-    
+
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -290,7 +290,7 @@ app.get('/api/admin/settings', async (req, res) => {
 app.post('/api/admin/settings', async (req, res) => {
   try {
     const { shuffleTime, eventDuration, adminSecret } = req.body;
-    
+
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -299,16 +299,16 @@ app.post('/api/admin/settings', async (req, res) => {
     if (!settings) {
       settings = new Settings({ key: 'global' });
     }
-    
+
     if (shuffleTime) settings.shuffleTime = shuffleTime;
     if (eventDuration) settings.eventDuration = eventDuration;
     settings.updatedAt = new Date();
-    
+
     await settings.save();
-    
+
     // Invalidate cache when settings change
     invalidateSettingsCache();
-    
+
     res.json({ success: true, settings });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -319,7 +319,7 @@ app.post('/api/admin/settings', async (req, res) => {
 app.post('/api/admin/reset-team/:teamName', async (req, res) => {
   try {
     const { adminSecret } = req.body;
-    
+
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -334,6 +334,7 @@ app.post('/api/admin/reset-team/:teamName', async (req, res) => {
       member.currentQuestionIndex = null;
       member.languageId = 71;  // Reset to default Python
       member.completed = false;
+      member.questionHistory = [];  // Clear question history
       member.lastUpdated = new Date();
     });
     // Clear team-level questions, code, and language tracking
@@ -358,7 +359,7 @@ app.post('/api/admin/reset-team/:teamName', async (req, res) => {
 app.post('/api/admin/reset-all-teams', async (req, res) => {
   try {
     const { adminSecret } = req.body;
-    
+
     if (adminSecret !== process.env.ADMIN_SECRET) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -371,6 +372,7 @@ app.post('/api/admin/reset-all-teams', async (req, res) => {
           'members.$[].currentQuestionIndex': null,
           'members.$[].languageId': 71,
           'members.$[].completed': false,
+          'members.$[].questionHistory': [],
           'members.$[].lastUpdated': new Date(),
           assignedQuestions: [],
           codeByQuestion: {},
@@ -408,8 +410,8 @@ app.post('/api/student/login', async (req, res) => {
       return res.status(404).json({ error: 'GMID not found in this team' });
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       teamName: team.teamName,
       gmid: gmid,
       memberIndex,
@@ -437,35 +439,35 @@ app.post('/api/student/start-session', async (req, res) => {
     if (team.isActive) {
       const memberIndex = team.members.findIndex(m => m.gmid === gmid);
       const member = team.members[memberIndex];
-      
+
       // Get question by member's current index
       const questionId = team.assignedQuestions[member.currentQuestionIndex];
       const question = await Question.findById(questionId);
-      
+
       // Get code for this question from team's codeByQuestion
       const questionIdStr = questionId.toString();
       const codeForQuestion = team.codeByQuestion?.get(questionIdStr) || {};
-      const codeByLanguage = codeForQuestion instanceof Map 
-        ? Object.fromEntries(codeForQuestion) 
+      const codeByLanguage = codeForQuestion instanceof Map
+        ? Object.fromEntries(codeForQuestion)
         : codeForQuestion;
-      
+
       // Get the last used language for THIS question (not the member's preference)
       const questionLanguageId = team.questionLanguages?.get(questionIdStr) || 71;
-      
+
       // Calculate remaining times on server side to ensure consistency across all team members
       let remainingShuffleTime = settings.shuffleTime;
       let remainingEventTime = settings.eventDuration;
-      
+
       if (team.roundStartTime) {
         const elapsedShuffle = Math.floor((Date.now() - new Date(team.roundStartTime).getTime()) / 1000);
         remainingShuffleTime = Math.max(0, settings.shuffleTime - elapsedShuffle);
       }
-      
+
       if (team.eventStartTime) {
         const elapsedEvent = Math.floor((Date.now() - new Date(team.eventStartTime).getTime()) / 1000);
         remainingEventTime = Math.max(0, settings.eventDuration - elapsedEvent);
       }
-      
+
       return res.json({
         success: true,
         alreadyActive: true,
@@ -489,10 +491,10 @@ app.post('/api/student/start-session', async (req, res) => {
     const easyQuestions = await Question.find({ difficulty: 'easy' }).lean();
     const mediumQuestions = await Question.find({ difficulty: 'medium' }).lean();
     const hardQuestions = await Question.find({ difficulty: 'hard' }).lean();
-    
+
     if (easyQuestions.length < 1 || mediumQuestions.length < 1 || hardQuestions.length < 1) {
-      return res.status(400).json({ 
-        error: 'Not enough questions in database. Need at least 1 easy, 1 medium, and 1 hard question.' 
+      return res.status(400).json({
+        error: 'Not enough questions in database. Need at least 1 easy, 1 medium, and 1 hard question.'
       });
     }
 
@@ -505,7 +507,7 @@ app.post('/api/student/start-session', async (req, res) => {
 
     // Store question IDs at team level
     team.assignedQuestions = selectedQuestions.map(q => q._id);
-    
+
     // Initialize empty code storage and default language for each question
     team.codeByQuestion = new Map();
     team.questionLanguages = new Map();
@@ -516,9 +518,11 @@ app.post('/api/student/start-session', async (req, res) => {
     });
 
     // Assign question indices to members (0=easy, 1=medium, 2=hard)
+    // Also initialize questionHistory to track which questions each member has worked on
     for (let i = 0; i < team.members.length; i++) {
       team.members[i].currentQuestionIndex = i;
       team.members[i].completed = false;
+      team.members[i].questionHistory = [i]; // Record their starting question
     }
 
     team.isActive = true;
@@ -573,31 +577,31 @@ app.post('/api/student/get-state', async (req, res) => {
 
     const memberIndex = team.members.findIndex(m => m.gmid === gmid);
     const member = team.members[memberIndex];
-    
+
     // Get question by member's current index
     const question = team.assignedQuestions?.[member.currentQuestionIndex] || null;
     const questionIdStr = question?._id?.toString() || '';
-    
+
     // Get code for this question from team's codeByQuestion
     const codeByLanguage = team.codeByQuestion?.[questionIdStr] || {};
-    
+
     // Get the last used language for THIS question
     const questionLanguageId = team.questionLanguages?.[questionIdStr] || 71;
-    
+
     // Calculate remaining times on server side to ensure consistency across all team members
     let remainingShuffleTime = settings.shuffleTime;
     let remainingEventTime = settings.eventDuration;
-    
+
     if (team.roundStartTime) {
       const elapsedShuffle = Math.floor((Date.now() - new Date(team.roundStartTime).getTime()) / 1000);
       remainingShuffleTime = Math.max(0, settings.shuffleTime - elapsedShuffle);
     }
-    
+
     if (team.eventStartTime) {
       const elapsedEvent = Math.floor((Date.now() - new Date(team.eventStartTime).getTime()) / 1000);
       remainingEventTime = Math.max(0, settings.eventDuration - elapsedEvent);
     }
-    
+
     res.json({
       success: true,
       question,
@@ -633,7 +637,7 @@ app.post('/api/student/save-code', async (req, res) => {
 
     // Update code in team's codeByQuestion and track language for this question
     const result = await Team.updateOne(
-      { 
+      {
         teamName,
         'members.gmid': gmid,
         'members.completed': { $ne: true }  // Don't update if already completed
@@ -666,7 +670,12 @@ app.post('/api/student/save-code', async (req, res) => {
 });
 
 // Shuffle questions between team members (called when timer ends)
-// Only rotates the question index - no code data movement needed!
+// Uses a smart assignment algorithm that ensures:
+// 1. FROZEN questions (completed/all test cases passed) are NEVER reassigned to anyone
+// 2. No member gets the same question they previously worked on
+// 3. No member keeps their current question (true derangement)
+// 4. When only 1 member is left, they keep their current question (edge case)
+// 5. When all fresh questions are exhausted, falls back to least-recently-used (still excluding frozen)
 app.post('/api/student/shuffle', async (req, res) => {
   try {
     const { teamName } = req.body;
@@ -676,29 +685,153 @@ app.post('/api/student/shuffle', async (req, res) => {
       return res.status(404).json({ error: 'Team not found' });
     }
 
-    // Get indices of members who haven't completed
+    // ===== STEP 1: Identify FROZEN questions =====
+    // A question is frozen when a member has completed it (all test cases passed).
+    // Frozen questions are permanently locked and must NEVER be reassigned to anyone.
+    const frozenQuestionIndices = new Set(
+      team.members
+        .filter(m => m.completed && m.currentQuestionIndex != null)
+        .map(m => m.currentQuestionIndex)
+    );
+
+    // ===== STEP 2: Get incomplete members =====
     const incompleteMembers = team.members
-      .map((m, i) => ({ memberIdx: i, questionIdx: m.currentQuestionIndex, completed: m.completed }))
+      .map((m, i) => ({
+        memberIdx: i,
+        questionIdx: m.currentQuestionIndex,
+        completed: m.completed,
+        questionHistory: m.questionHistory || []
+      }))
       .filter(m => !m.completed);
 
-    // If all completed or only one incomplete, no shuffle needed
+    // EDGE CASE: If all completed or only one incomplete member left,
+    // no shuffle is possible — the lone member keeps their current question
     if (incompleteMembers.length <= 1) {
       team.roundStartTime = new Date();
       team.currentRound += 1;
       await team.save();
-      return res.json({ success: true, message: 'No shuffle needed' });
+      return res.json({ success: true, message: 'No shuffle needed - solo member keeps current question' });
     }
 
-    // Get the question indices of incomplete members
-    const questionIndices = incompleteMembers.map(m => m.questionIdx);
-    
-    // Rotate the question indices (shift by 1): [0, 1, 2] -> [1, 2, 0]
-    const rotatedIndices = [...questionIndices.slice(1), questionIndices[0]];
+    // ===== STEP 3: Build UNFROZEN question pool =====
+    // Only questions that have NOT been completed by anyone can participate in shuffles
+    const totalQuestions = team.assignedQuestions.length; // typically 3
+    const unfrozenQuestionIndices = Array.from({ length: totalQuestions }, (_, i) => i)
+      .filter(i => !frozenQuestionIndices.has(i));
 
-    // Apply the rotated indices back to incomplete members
-    // This is all that's needed - code stays with its question!
+    // If there's only 1 or 0 unfrozen questions left, we can't meaningfully shuffle
+    if (unfrozenQuestionIndices.length <= 1) {
+      team.roundStartTime = new Date();
+      team.currentRound += 1;
+      await team.save();
+      return res.json({ success: true, message: 'Not enough unfrozen questions to shuffle' });
+    }
+
+    // ===== STEP 4: Compute available questions per member =====
+    // For each incomplete member, find which UNFROZEN questions they haven't seen yet
+    // AND is not their current question (to guarantee an actual change)
+    const memberAvailableQuestions = incompleteMembers.map(m => {
+      const historySet = new Set(m.questionHistory);
+      const available = unfrozenQuestionIndices.filter(
+        qIdx => !historySet.has(qIdx) && qIdx !== m.questionIdx
+      );
+      return available;
+    });
+
+    // ===== STEP 5: Backtracking assignment solver =====
+    // Finds a valid assignment where:
+    //  - Each member gets a different question (no two members share a question)
+    //  - No member keeps their current question (derangement)
+    //  - Questions are chosen from each member's available pool
+    function findValidAssignment(members, available, currentQuestions) {
+      const n = members.length;
+      const assignment = new Array(n).fill(-1);
+      const usedQuestions = new Set();
+
+      function backtrack(idx) {
+        if (idx === n) {
+          // Verify derangement: no one keeps their current question
+          return assignment.every((qIdx, i) => qIdx !== currentQuestions[i]);
+        }
+
+        const candidates = available[idx].filter(q => !usedQuestions.has(q));
+
+        for (const q of candidates) {
+          assignment[idx] = q;
+          usedQuestions.add(q);
+          if (backtrack(idx + 1)) return true;
+          usedQuestions.delete(q);
+        }
+
+        assignment[idx] = -1;
+        return false;
+      }
+
+      // Fisher-Yates shuffle on each candidate list for randomness
+      available = available.map(arr => {
+        const shuffled = [...arr];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled;
+      });
+
+      if (backtrack(0)) return assignment;
+      return null;
+    }
+
+    const currentQuestions = incompleteMembers.map(m => m.questionIdx);
+    let newAssignment = findValidAssignment(
+      incompleteMembers,
+      memberAvailableQuestions,
+      currentQuestions
+    );
+
+    // ===== STEP 6: Fallback — LRU strategy (still excludes frozen) =====
+    // If no fresh assignment exists (members have seen all unfrozen questions),
+    // allow previously-seen questions but prefer the least-recently-used ones
+    if (!newAssignment) {
+      const relaxedAvailable = incompleteMembers.map(m => {
+        const history = m.questionHistory;
+        // All UNFROZEN questions except current, sorted by recency (least recent first)
+        const candidates = unfrozenQuestionIndices
+          .filter(qIdx => qIdx !== m.questionIdx)
+          .sort((a, b) => {
+            const aIdx = history.indexOf(a);
+            const bIdx = history.indexOf(b);
+            if (aIdx === -1) return -1; // Never seen = highest priority
+            if (bIdx === -1) return 1;
+            return aIdx - bIdx; // Earlier in history = used longer ago = preferred
+          });
+        return candidates;
+      });
+
+      newAssignment = findValidAssignment(
+        incompleteMembers,
+        relaxedAvailable,
+        currentQuestions
+      );
+
+      // ULTIMATE FALLBACK: Simple rotation among current (unfrozen) questions
+      // This guarantees at least everyone gets a different question than their current one
+      if (!newAssignment) {
+        const rotated = [...currentQuestions.slice(1), currentQuestions[0]];
+        newAssignment = rotated;
+      }
+    }
+
+    // ===== STEP 7: Apply assignment and update history =====
     incompleteMembers.forEach((m, i) => {
-      team.members[m.memberIdx].currentQuestionIndex = rotatedIndices[i];
+      const newQuestionIdx = newAssignment[i];
+      team.members[m.memberIdx].currentQuestionIndex = newQuestionIdx;
+
+      // Add to question history if not already present
+      const history = team.members[m.memberIdx].questionHistory || [];
+      if (!history.includes(newQuestionIdx)) {
+        history.push(newQuestionIdx);
+      }
+      team.members[m.memberIdx].questionHistory = history;
     });
 
     team.roundStartTime = new Date();
@@ -727,7 +860,7 @@ app.post('/api/student/run-code', async (req, res) => {
     }
 
     const member = team.members[memberIndex];
-    
+
     // Get question by member's current index
     const question = team.assignedQuestions[member.currentQuestionIndex];
 
@@ -751,7 +884,7 @@ app.post('/api/student/run-code', async (req, res) => {
               stdin: testCase.input
             },
             {
-              headers: { 
+              headers: {
                 'Content-Type': 'application/json',
                 'User-Agent': 'BrainwaveBuzzer/1.0'
               },
@@ -760,7 +893,7 @@ app.post('/api/student/run-code', async (req, res) => {
           );
 
           const result = submitResponse.data;
-          
+
           // Judge0 status codes: 3 = Accepted (correct output)
           const actualOutput = (result.stdout || result.stderr || result.compile_output || '').trim();
           const expectedOutput = testCase.expectedOutput.trim();
@@ -810,13 +943,13 @@ app.post('/api/student/run-code', async (req, res) => {
     if (allPassed) {
       team.members[memberIndex].completed = true;
       // Note: code is already saved in codeByQuestion via save-code endpoint
-      
+
       // Check if all team members completed
       const allCompleted = team.members.every(m => m.completed);
       if (allCompleted) {
         team.completedAt = new Date();
       }
-      
+
       // Single save for all changes
       await team.save();
     }
@@ -857,7 +990,7 @@ app.post('/api/student/check-shuffle', async (req, res) => {
     // Get question by member's current index
     const question = team.assignedQuestions?.[member.currentQuestionIndex] || null;
     const questionIdStr = question?._id?.toString() || '';
-    
+
     // Get code for this question from team's codeByQuestion
     const codeByLanguage = team.codeByQuestion?.[questionIdStr] || {};
 
@@ -867,12 +1000,12 @@ app.post('/api/student/check-shuffle', async (req, res) => {
     // Calculate remaining times on server side to ensure consistency across all team members
     let remainingShuffleTime = settings.shuffleTime;
     let remainingEventTime = settings.eventDuration;
-    
+
     if (team.roundStartTime) {
       const elapsedShuffle = Math.floor((Date.now() - new Date(team.roundStartTime).getTime()) / 1000);
       remainingShuffleTime = Math.max(0, settings.shuffleTime - elapsedShuffle);
     }
-    
+
     if (team.eventStartTime) {
       const elapsedEvent = Math.floor((Date.now() - new Date(team.eventStartTime).getTime()) / 1000);
       remainingEventTime = Math.max(0, settings.eventDuration - elapsedEvent);

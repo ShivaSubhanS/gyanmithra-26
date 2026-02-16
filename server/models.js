@@ -58,6 +58,11 @@ const teamSchema = new mongoose.Schema({
       type: Boolean,
       default: false
     },
+    // Track which question indices this member has already worked on
+    questionHistory: {
+      type: [Number],
+      default: []
+    },
     lastUpdated: {
       type: Date,
       default: Date.now
